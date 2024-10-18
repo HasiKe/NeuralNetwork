@@ -1,96 +1,117 @@
-# Neural Network from Scratch in C++
+# 🧠 Neural Network from Scratch in C++
 
 [![en](https://img.shields.io/badge/lang-en-red.svg)](https://github.com/HasiKe/NeuralNetwork/blob/main/README.md)
 [![de](https://img.shields.io/badge/lang-de-red.svg)](https://github.com/HasiKe/NeuralNetwork/blob/main/docs/de/README.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![C++](https://img.shields.io/badge/C++-11-blue.svg)](https://isocpp.org/)
 
-<p> This project implements a simple neural network in C++ without using external machine learning libraries. It provides functions for training, saving, and loading the network, as well as evaluating its performance on a given dataset. <p>
+> A simple neural network implementation in C++ without external machine learning libraries.
 
-## About the Project
-<p> The goal of this project is to understand the basics of neural networks by implementing a network from scratch in C++. It serves as a learning resource and offers insights into the implementation of forward and backpropagation, weight adjustments, and saving and loading models. <p>
+## 📚 About the Project
 
-## Features
-* Standalone Neural Network: No external libraries required.
-* Save and Load Functions: Save trained models and load them for future predictions.
-* Performance Evaluation: Compare the accuracy of the network before and after training.
-* User Interaction: The program informs the user about performance changes and asks if the model should be saved.
+This project aims to demystify neural networks by implementing one from scratch in C++. It serves as an educational resource, providing insights into:
 
-<!-- GETTING STARTED -->
-## Getting Started
+- Forward and backpropagation
+- Weight adjustments
+- Model saving and loading
 
-## Prerequisites
-<p> C++ Compiler: Supports at least C++11. <br>
-CMake: For building the project. <br>
-Standard Libraries: No additional libraries required. <p>
+## ✨ Features
 
-## Installation
-1. Clone the repository
-```bash
-git clone https://github.com/IhrBenutzername/NeuralNetwork.git
-cd NeuralNetwork
-```
-2. Create a build directory and navigate to it
+- 🏗️ **Standalone Neural Network**: No external libraries required
+- 💾 **Save and Load Functions**: Preserve trained models for future use
+- 📊 **Performance Evaluation**: Compare accuracy before and after training
+- 🤝 **User Interaction**: Informative prompts and save options
 
-```bash
-mkdir build
-cd build
-```
-3. Configure the project with CMake
+## 🚀 Getting Started
 
-```bash
-cmake ..
-```
-4. Build the project
+### Prerequisites
 
-```bash
-make
-```
+- C++ Compiler (C++11 or later)
+- CMake
+- Standard C++ libraries
 
-<!-- Usage -->
-## Usage
-After a successful build, you can run the program:
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/HasiKe/NeuralNetwork.git
+   cd NeuralNetwork
+   ```
+
+2. Create and navigate to the build directory:
+   ```bash
+   mkdir build && cd build
+   ```
+
+3. Configure with CMake:
+   ```bash
+   cmake ..
+   ```
+
+4. Build the project:
+   ```bash
+   make
+   ```
+
+## 🖥️ Usage
+
+Run the program:
 
 ```bash
 ./NN
 ```
-The program performs the following steps:
 
-<p> 1. Load Dataset: The Seeds dataset is loaded from the data/ directory and normalized. <br>
-2. Initialize or Load Network: Checks if a saved network exists. If so, it is loaded; otherwise, a new network is initialized. <br>
-3. Performance Evaluation Before Training: The accuracy of the network is measured on the dataset. <br>
-4.Training the Network: The network is trained with the specified hyperparameters. <br>
-5. Performance Evaluation After Training: The accuracy is measured again and compared with the previous one. <br>
-6. Save Option: The user is asked whether to save the trained network. <p>
+The program will:
 
+1. 📥 Load the Seeds dataset
+2. 🔍 Check for existing network or initialize a new one
+3. 📊 Evaluate initial performance
+4. 🏋️ Train the network
+5. 📈 Re-evaluate performance
+6. 💾 Offer to save the trained network
 
-## Project Structure
-- src/: 
-    - Source code of the project.
-- include/:
-    - Header files for the project.
-- data/:
-    - Dataset files (e.g., seeds_dataset.csv).
-- build/:
-    - Build directory (after creation).
+## 🗂️ Project Structure
 
-## Adjusting Hyperparameters
-You can adjust the hyperparameters of the network directly in main.cpp:
-- n_hidden: Number of neurons in the hidden layer.
-- l_rate: Learning rate for weight adjustment.
-- n_epoch: Number of epochs for training.
-```c++
-int n_hidden = 5;   
-float l_rate = 0.2f;
-int n_epoch = 500;  
 ```
-## Preparing Data
-Ensure that the Seeds dataset is present in the data/ directory and named seeds_dataset.csv. The path to the dataset is set in main.cpp:
+NeuralNetwork/
+│
+├── src/            # Source code
+├── include/        # Header files
+├── data/           # Dataset files
+└── build/          # Build directory (created during build process)
+```
 
-```c++
+## ⚙️ Adjusting Hyperparameters
+
+Modify these values in `main.cpp`:
+
+```cpp
+int nHidden = 5;   // Number of neurons in hidden layer
+float learningRate = 0.2f; // Learning rate
+int nEpochs = 500;  // Number of training epochs
+```
+
+## 📊 Preparing Data
+
+Ensure `seeds_dataset.csv` is in the `data/` directory. Adjust the path in `main.cpp` if needed:
+
+```cpp
 csv_data = load_csv_data("data/seeds_dataset.csv");
 ```
-If the dataset is located elsewhere, adjust the path accordingly.
 
-<!-- TODO -->
-# TODO
-- [ ] auto set learn rate
-- [ ] add different typer of neurons
+## 📝 TODO
+
+- [ ] Implement automatic learning rate adjustment
+- [ ] Add support for different types of neurons
+
+## 🤝 Contributing
+
+Contributions are welcome! Feel free to open issues or submit pull requests.
+
+## 📄 License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+---
+
+<p align="center">Made with ❤️ by HasiKe</p>
