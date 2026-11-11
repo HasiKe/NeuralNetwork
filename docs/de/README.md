@@ -1,101 +1,206 @@
-# Neuronales Netzwerk von Grund auf in C++
+# nn — CPU-effiziente Neuronale-Netze-Bibliothek in C++17
 
 [![en](https://img.shields.io/badge/lang-en-red.svg)](https://github.com/HasiKe/NeuralNetwork/blob/main/README.md)
 [![de](https://img.shields.io/badge/lang-de-red.svg)](https://github.com/HasiKe/NeuralNetwork/blob/main/docs/de/README.md)
 
-
-<p>Dieses Projekt implementiert ein einfaches neuronales Netzwerk in C++ ohne Verwendung externer Machine-Learning-Bibliotheken. Es bietet Funktionen zum Trainieren, Speichern und Laden des Netzwerks sowie zur Bewertung seiner Leistung auf einem gegebenen Datensatz.</p>
-
-
-## Über das Projekt
-<p>Das Ziel dieses Projekts ist es, die Grundlagen neuronaler Netzwerke zu verstehen, indem ein Netzwerk von Grund auf in C++ implementiert wird. Es dient als Lernressource und bietet Einblicke in die Implementierung von Forward- und Backpropagation, Gewichtsanpassungen sowie in das Speichern und Laden von Modellen.</p>
+Eine abhängigkeitsfreie Bibliothek für neuronale Netze, von Grund auf
+geschrieben. Ursprünglich ein Lernprojekt (ein Perzeptron mit einer
+versteckten Schicht für den Seeds-Datensatz), jetzt eine wiederverwendbare
+Bibliothek mit vielen Neuronentypen, Mini-Batch-Training und
+cache-optimierten, SIMD-vektorisierten, mehrkernfähigen CPU-Kernels.
 
 ## Funktionen
-* Eigenständiges neuronales Netzwerk: Keine externen Bibliotheken erforderlich.
-+ Speicher- und Ladefunktionen: Speichern Sie trainierte Modelle und laden Sie sie für zukünftige Vorhersagen.
-+ Leistungsbewertung: Vergleichen Sie die Genauigkeit des Netzwerks vor und nach dem Training.
-+ Benutzerinteraktion: Das Programm informiert den Benutzer über Leistungsänderungen und fragt, ob das Modell gespeichert werden soll.
 
-<!-- GETTING STARTED -->
-## Getting Started
+**Neuronentypen**
 
-## Voraussetzungen
-<p> C++ Compiler: Unterstützt mindestens C++11.<br>
-CMake: Zum Bauen des Projekts.<br>
-Standardbibliotheken: Keine zusätzlichen Bibliotheken erforderlich.<p>
+| Familie | Typen |
+|---|---|
+| Aktivierungsfunktionen (`nn::Activation`) | Linear, Sigmoid, Tanh, ReLU, LeakyReLU, ELU, SELU, GELU, Swish/SiLU, Mish, Softplus, Softsign, HardSigmoid, HardTanh, HardSwish, ReLU6, Gauß, Sinus, Step (Perzeptron), Softmax |
+| Feed-Forward-Schichten | `Dense` (voll verbunden), `RBF` (radiale Basisfunktionen), `Dropout`, `LayerNorm` |
+| Rekurrente Zellen | `SimpleRNN` (Elman), `LSTM`, `GRU` — stapelbar über `return_sequences` |
+| Faltung | `Conv2D`, `MaxPool2D` |
+| Spikende Neuronen (`nn::spiking`) | Leaky Integrate-and-Fire, Izhikevich (7 Presets), Adaptive Exponential IF (AdEx), Hodgkin-Huxley; exponentielle Synapsen, Poisson-Input, STDP-Plastizität |
 
-## Installation
-Repository klonen
+**Training**: MSE, MAE, Huber, kategorische / binäre Kreuzentropie (mit
+Softmax- / Sigmoid-Ausgang fusioniert), SGD (+Momentum, Nesterov),
+Adam/AdamW, RMSProp, Adagrad, Gradient Clipping, Weight Decay,
+Lernraten-Schedules (Step, exponentiell, Cosine, *Reduce-on-Plateau* für
+automatische Lernrate), Validierungssplit, Early Stopping mit
+Wiederherstellung der besten Gewichte.
+
+**Hilfsfunktionen**: schneller CSV-Loader, Label-Encoding, One-Hot,
+Train/Test-Split, Min-Max- und Standard-Skalierung, binäres Speichern/Laden.
+
+## Performance-Design
+
+* **Zusammenhängende Matrizen statt Neuron-Objekten.** Jede Schicht speichert
+  ihre Gewichte als eine ausgerichtete `[in x out]`-Matrix; ein ganzer
+  Mini-Batch läuft mit einer GEMM durch die Schicht statt einem Skalarprodukt
+  pro Neuron.
+* **Cache- und registerblockierte GEMM** (4x16-Mikrokernel, L2-große Panels),
+  über Ausgabekacheln mit OpenMP parallelisiert. Optional CBLAS
+  (`-DNN_USE_BLAS=ON`, z. B. OpenBLAS/MKL).
+* **Vektorisierte Transzendente** (`nn/fastmath.hpp`): verzweigungsfreie
+  exp/log/tanh/sigmoid, die der Compiler ohne `-ffast-math` zu AVX/NEON-Code
+  macht; Eingaben werden so begrenzt, dass keine subnormalen Zahlen entstehen.
+* **Keine Allokationen in der Trainingsschleife**: Matrizen wachsen nur, alle
+  Arbeitspuffer werden zwischen Batches wiederverwendet.
+* **Rekurrente Schichten** berechnen die Eingangsprojektion aller Zeitschritte
+  in einer großen GEMM; nur `h_{t-1} W_h` ist sequentiell.
+* **Spiking-Simulation** mit Structure-of-Arrays-Zustand (vektorisierte
+  Updates) und CSR-Synapsen: Kosten skalieren mit der Zahl der Spikes, nicht
+  der Synapsen. Zufallsverbindungen per geometrischem Überspringen
+  (O(Synapsen) statt O(n²)).
+
+Gemessen auf einem Intel N97 (4 Kerne, AVX2), `./build/nn_bench`:
+
+| Benchmark | Ergebnis |
+|---|---|
+| GEMM 256³ / 1024³ | ~80 / ~50-65 GFLOP/s |
+| MLP 784-512-256-10 Training (Batch 128) | ~17.000 Samples/s |
+| MLP Inferenz | ~60.000 Samples/s |
+| LSTM (T=32, H=128) Training | ~2.100 Sequenzen/s |
+| 10k Izhikevich-Neuronen, 1 Mio. Synapsen | ~7x schneller als Echtzeit |
+
+## Bauen
+
+Voraussetzungen: C++17-Compiler (GCC ≥ 8, Clang ≥ 7, MSVC 2019), CMake ≥ 3.14.
+OpenMP wird genutzt, falls vorhanden.
 
 ```bash
-git clone https://github.com/IhrBenutzername/NeuralNetwork.git
-cd NeuralNetwork
+cmake -S . -B build            # standardmäßig Release
+cmake --build build -j
+ctest --test-dir build         # oder ./build/nn_tests
+./build/nn_bench
 ```
-Build-Verzeichnis erstellen und zum Verzeichnis navigieren
+
+CMake-Optionen:
+
+| Option | Standard | Bedeutung |
+|---|---|---|
+| `NN_USE_OPENMP` | ON | mehrkernfähige Kernels |
+| `NN_USE_BLAS` | OFF | GEMM an externes CBLAS delegieren |
+| `NN_NATIVE_ARCH` | ON (Top-Level) | `-march=native`; für portable Binaries ausschalten |
+| `NN_BUILD_EXAMPLES` / `NN_BUILD_TESTS` / `NN_BUILD_BENCHMARKS` | ON (Top-Level) | Extras |
+| `BUILD_SHARED_LIBS` | OFF | `libnn.so` statt `libnn.a` |
+
+### Einbinden in eigene Projekte
+
+Installieren und `find_package` nutzen:
 
 ```bash
-mkdir build
-cd build
+cmake --install build --prefix /opt/nn
 ```
-Projekt mit CMake konfigurieren
-
-```bash
-cmake ..
-```
-Projekt bauen
-
-```bash
-make
+```cmake
+find_package(nn 2 REQUIRED)            # mit CMAKE_PREFIX_PATH=/opt/nn
+target_link_libraries(myapp PRIVATE nn::nn)
 ```
 
-<!-- Usage -->
-## Verwendung
-Nach erfolgreichem Build können Sie das Programm ausführen:
+oder als Unterverzeichnis:
 
-```bash
-./NN
+```cmake
+add_subdirectory(external/NeuralNetwork)   # Beispiele/Tests automatisch aus
+target_link_libraries(myapp PRIVATE nn::nn)
 ```
-Das Programm führt folgende Schritte aus:
 
-<p> 1. Datensatz laden: Der Seeds-Datensatz wird aus dem Verzeichnis data/ geladen und normalisiert.
-2.Netzwerkinitialisierung oder -laden: Überprüft, ob ein gespeichertes Netzwerk vorhanden ist. Falls ja, wird es geladen; andernfalls wird ein neues Netzwerk initialisiert.<br>
-3. Leistungsbewertung vor dem Training: Die Genauigkeit des Netzwerks wird auf dem Datensatz gemessen.<br>
-4. Training des Netzwerks: Das Netzwerk wird mit den angegebenen Hyperparametern trainiert.<br>
-5. Leistungsbewertung nach dem Training: Die Genauigkeit wird erneut gemessen und mit der vorherigen verglichen.<br>
-6. Speicheroption: Der Benutzer wird gefragt, ob das trainierte Netzwerk gespeichert werden soll.</p>
+## Schnellstart
 
+```cpp
+#include <nn/nn.hpp>
+
+nn::Matrix raw = nn::data::load_csv("data/seeds_dataset.csv");
+auto [x, labels] = nn::data::split_xy(raw);          // letzte Spalte = Label
+std::size_t k = nn::data::encode_labels(labels);
+nn::Matrix y = nn::data::one_hot(labels, k);
+nn::data::StandardScaler().fit_transform(x);
+
+nn::Network net(x.cols());
+net.add<nn::Dense>(32, nn::Activation::gelu());
+net.add<nn::Dropout>(0.1f);
+net.add<nn::Dense>(k, nn::Activation::softmax());
+net.compile(nn::Loss::CategoricalCrossEntropy, std::make_unique<nn::Adam>(1e-2f));
+
+nn::FitOptions opt;
+opt.epochs = 100;
+opt.batch_size = 16;
+opt.validation_split = 0.2f;
+opt.schedule = nn::LRSchedule::reduce_on_plateau();  // automatische Lernrate
+net.fit(x, y, opt);
+
+auto classes = net.predict_classes(x);
+net.save("model.nnet");
+nn::Network again = nn::Network::load("model.nnet");
+```
+
+### Datenlayout
+
+Jede Schicht verarbeitet Matrizen der Form `[Batch x Merkmale]`. Strukturierte
+Schichten interpretieren eine Zeile als flachen Tensor, Reshape-Schichten sind
+daher unnötig:
+
+* **Sequenzen** (RNN/LSTM/GRU): zeitlich geordnet, `[x_0 | x_1 | ... | x_{T-1}]`,
+  `Merkmale = input_dim / timesteps`.
+* **Bilder** (Conv2D/MaxPool2D): Kanal-Höhe-Breite (`CHW`).
+
+```cpp
+nn::Network seq(T * F);
+seq.add<nn::LSTM>(64, T, /*return_sequences=*/true);
+seq.add<nn::GRU>(32, T);
+seq.add<nn::Dense>(1);
+
+nn::Network cnn(28 * 28);
+auto& c1 = cnn.add<nn::Conv2D>(nn::Shape3{1, 28, 28}, 16, 3, 1, 1, nn::Activation::relu());
+auto& p1 = cnn.add<nn::MaxPool2D>(c1.output_shape(), 2);
+cnn.add<nn::Dense>(10, nn::Activation::softmax());
+```
+
+### Spikende Netze
+
+```cpp
+namespace sp = nn::spiking;
+sp::Network net(/*dt ms*/ 0.5f);
+auto exc = net.add_population(8000, sp::IzhikevichParams::regular_spiking());
+auto inh = net.add_population(2000, sp::IzhikevichParams::fast_spiking());
+net.connect(exc, exc, 0.01f, 0.5f);
+net.connect(inh, exc, 0.01f, -1.0f);
+net.add_poisson_input(exc, 2000, 1.5f);
+net.enable_stdp(exc, exc, sp::STDPParams{});
+net.run(2000);                         // 1 s
+float hz = net.firing_rate(exc);
+```
+
+## Beispiele
+
+| Programm | Zeigt |
+|---|---|
+| `example_seeds` | Nachfolger der ursprünglichen Demo: Laden/Trainieren/Bewerten/Speichern auf dem Seeds-Datensatz |
+| `example_xor` | dasselbe Problem mit 14 verschiedenen Neuronentypen und einem RBF-Netz |
+| `example_sequence` | Zeitreihenprognose mit gestapelten SimpleRNN / GRU / LSTM |
+| `example_mnist_like` | kleines CNN auf synthetischen 16x16-Formbildern |
+| `example_spiking` | Izhikevich-Netz mit 10k Neuronen plus LIF- / AdEx- / HH-Zellen |
 
 ## Projektstruktur
-- src/: 
-    - Source code of the project.
-- include/:
-    - Header files for the project.
-- data/:
-    - Dataset files (e.g., seeds_dataset.csv).
-- build/:
-    - Build directory (after creation).
 
-## Anpassung der Hyperparameter
-Sie können die Hyperparameter des Netzwerks direkt in der main.cpp anpassen:
-
-- n_hidden: Anzahl der Neuronen in der versteckten Schicht.
-- l_rate: Lernrate für die Gewichtsanpassung.
-- n_epoch: Anzahl der Epochen für das Training.
-```c++
-int n_hidden = 5;     // Anzahl der Neuronen in der versteckten Schicht
-float l_rate = 0.2f;  // Lernrate
-int n_epoch = 500;    // Anzahl der Trainingsdurchläufe
+```
+include/nn/        öffentliche Header (nn.hpp = Sammelheader)
+  layers/          Dense, Dropout, RBF, LayerNorm, rekurrent, Faltung
+src/               Implementierung
+tests/             eigenständige Testsuite (Gradientenprüfung für jede Schicht und Aktivierung)
+benchmarks/        nn_bench
+examples/          Beispielprogramme
+data/              Seeds-Datensatz
+docs/              Hintergrund zu Netzarchitekturen
 ```
 
-## Daten vorbereiten
-Stellen Sie sicher, dass der Seeds-Datensatz im Verzeichnis data/ vorhanden ist und den Namen seeds_dataset.csv trägt. Der Pfad zum Datensatz wird in der main.cpp festgelegt:
+## Hinweise
 
-```c++
-csv_data = load_csv_data("data/seeds_dataset.csv");
-```
-Falls der Datensatz an einem anderen Ort liegt, passen Sie den Pfad entsprechend an.
+* `Network` verwendet interne Puffer wieder und ist nicht thread-sicher; für
+  parallele Inferenz eine Instanz pro Thread nutzen (Kopie über
+  `save`/`load`). Die Kernels selbst sind mehrkernfähig.
+* `nn::set_num_threads(n)` begrenzt die Threadzahl (ebenso `OMP_NUM_THREADS`).
+* Modelldateien sind Little-Endian-Binärdateien (`.nnet`, Formatversion 2).
+  Dateien der alten textbasierten Version 1 können nicht geladen werden.
 
-<!-- TODO -->
-# TODO
-- [ ] setzte die learn rate automatisch
-- [ ] Hinzufügen von verschiedenen Neuronen Typen
+## Lizenz
+
+Siehe [LICENSE.txt](../../LICENSE.txt).
