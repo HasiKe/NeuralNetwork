@@ -22,6 +22,12 @@ option(NN_BUILD_TESTS      "Build unit tests"                               ${NN
 option(NN_BUILD_BENCHMARKS "Build benchmarks"                               ${NN_TOP_LEVEL})
 option(NN_USE_OPENMP       "Multi-threaded kernels via OpenMP"              ON)
 option(NN_USE_BLAS         "Use an external CBLAS (e.g. OpenBLAS) for GEMM" OFF)
+option(NN_USE_OPENCL       "GPU backend: OpenCL (Intel, AMD, NVIDIA, ARM, ...)" OFF)
+option(NN_USE_VULKAN       "GPU backend: Vulkan compute"                     OFF)
+option(NN_USE_CUDA         "GPU backend: CUDA / cuBLAS (NVIDIA)"             OFF)
+option(NN_USE_HIP          "GPU backend: HIP / hipBLAS (AMD ROCm)"           OFF)
+option(NN_USE_SYCL         "GPU backend: SYCL (oneAPI DPC++, AdaptiveCpp)"   OFF)
+option(NN_USE_GPU          "Enable every GPU backend whose SDK is found"     OFF)
 option(NN_NATIVE_ARCH      "Optimise for the build machine (-march=native)" ${NN_TOP_LEVEL})
 option(NN_INSTALL          "Generate install target"                        ${NN_TOP_LEVEL})
 
@@ -54,6 +60,7 @@ endif()
 set(NN_SOURCES
     src/activation.cpp
     src/data.cpp
+    src/device.cpp
     src/kernels.cpp
     src/layer_factory.cpp
     src/loss.cpp
@@ -120,6 +127,91 @@ if(NN_USE_BLAS)
     target_link_libraries(nn PRIVATE BLAS::BLAS)
     target_compile_definitions(nn PRIVATE NN_USE_BLAS)
     string(APPEND NN_CONFIG_DEPS "find_dependency(BLAS)\n")
+endif()
+
+# ---------------------------------------------------------------- GPU backends
+# Each backend is optional. NN_USE_<X>=ON makes a missing SDK a hard error;
+# NN_USE_GPU=ON enables whatever is found and skips the rest.
+set(NN_GPU_BACKENDS "")
+macro(nn_gpu_backend name want found)
+    if(${found})
+        list(APPEND NN_GPU_BACKENDS ${name})
+    elseif(${want})
+        message(FATAL_ERROR "nn: ${name} backend requested but its SDK was not found")
+    endif()
+endmacro()
+
+if(NN_USE_OPENCL OR NN_USE_GPU)
+    find_package(OpenCL QUIET)
+    nn_gpu_backend(OpenCL NN_USE_OPENCL OpenCL_FOUND)
+    if(OpenCL_FOUND)
+        target_sources(nn PRIVATE src/gpu/opencl.cpp)
+        target_link_libraries(nn PRIVATE OpenCL::OpenCL)
+        target_compile_definitions(nn PRIVATE NN_HAS_OPENCL)
+        string(APPEND NN_CONFIG_DEPS "find_dependency(OpenCL)\n")
+    endif()
+endif()
+
+if(NN_USE_VULKAN OR NN_USE_GPU)
+    find_package(Vulkan QUIET)
+    nn_gpu_backend(Vulkan NN_USE_VULKAN Vulkan_FOUND)
+    if(Vulkan_FOUND)
+        target_sources(nn PRIVATE src/gpu/vulkan.cpp)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")  # Vk*Info{sType} idiom
+            set_source_files_properties(src/gpu/vulkan.cpp PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers)
+        endif()
+        target_link_libraries(nn PRIVATE Vulkan::Vulkan)
+        target_compile_definitions(nn PRIVATE NN_HAS_VULKAN)
+        string(APPEND NN_CONFIG_DEPS "find_dependency(Vulkan)\n")
+    endif()
+endif()
+
+if(NN_USE_CUDA OR NN_USE_GPU)
+    find_package(CUDAToolkit QUIET)
+    set(NN_CUDA_OK OFF)
+    if(CUDAToolkit_FOUND AND TARGET CUDA::cublas)
+        set(NN_CUDA_OK ON)
+    endif()
+    nn_gpu_backend(CUDA NN_USE_CUDA NN_CUDA_OK)
+    if(NN_CUDA_OK)
+        target_sources(nn PRIVATE src/gpu/cuda.cpp)
+        target_link_libraries(nn PRIVATE CUDA::cudart CUDA::cublas)
+        target_compile_definitions(nn PRIVATE NN_HAS_CUDA)
+        string(APPEND NN_CONFIG_DEPS "find_dependency(CUDAToolkit)\n")
+    endif()
+endif()
+
+if(NN_USE_HIP OR NN_USE_GPU)
+    list(APPEND CMAKE_PREFIX_PATH /opt/rocm)
+    find_package(hip QUIET CONFIG)
+    find_package(hipblas QUIET CONFIG)
+    set(NN_HIP_OK OFF)
+    if(hip_FOUND AND hipblas_FOUND)
+        set(NN_HIP_OK ON)
+    endif()
+    nn_gpu_backend(HIP NN_USE_HIP NN_HIP_OK)
+    if(NN_HIP_OK)
+        target_sources(nn PRIVATE src/gpu/hip.cpp)
+        target_link_libraries(nn PRIVATE hip::host roc::hipblas)
+        target_compile_definitions(nn PRIVATE NN_HAS_HIP)
+        string(APPEND NN_CONFIG_DEPS "find_dependency(hip)\nfind_dependency(hipblas)\n")
+    endif()
+endif()
+
+if(NN_USE_SYCL OR NN_USE_GPU)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag(-fsycl NN_COMPILER_HAS_SYCL)
+    nn_gpu_backend(SYCL NN_USE_SYCL NN_COMPILER_HAS_SYCL)
+    if(NN_COMPILER_HAS_SYCL)
+        target_sources(nn PRIVATE src/gpu/sycl.cpp)
+        set_source_files_properties(src/gpu/sycl.cpp PROPERTIES COMPILE_OPTIONS -fsycl)
+        target_link_options(nn PUBLIC -fsycl)
+        target_compile_definitions(nn PRIVATE NN_HAS_SYCL)
+    endif()
+endif()
+
+if(NN_GPU_BACKENDS)
+    message(STATUS "nn: GPU backends: ${NN_GPU_BACKENDS}")
 endif()
 
 # ---------------------------------------------------------------- extras

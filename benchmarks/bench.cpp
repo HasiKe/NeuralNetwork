@@ -40,6 +40,41 @@ int main(int argc, char** argv) {
         std::printf("\n");
     }
 
+    // GPU backends compiled into this build
+    for (nn::Backend b : nn::compiled_backends()) {
+        if (b == nn::Backend::CPU || !nn::set_backend(b)) continue;
+        nn::set_offload_threshold(0);
+        std::printf("\n%s\n  GEMM (GFLOP/s incl. transfers)\n", nn::device_name().c_str());
+        for (std::size_t n : {128, 256, 512, 1024, 2048}) {
+            nn::Matrix A = rnd(n, n, rng), B = rnd(n, n, rng), C(n, n);
+            double t = time_it([&] { nn::kernels::gemm(false, false, n, n, n, 1, A.data(), n, B.data(), n, 0, C.data(), n); },
+                               n >= 1024 ? 3 : 10);
+            std::printf("  %4zu: NN %7.1f\n", n, 2.0 * n * n * n / t * 1e-9);
+        }
+        nn::set_offload_threshold(std::size_t(1) << 22);
+        const std::size_t N = 4096;
+        nn::Matrix x = rnd(N, 784, rng), y(N, 10);
+        for (std::size_t i = 0; i < N; ++i) y(i, rng.below(10)) = 1;
+        for (std::size_t width : {512, 2048}) {
+            nn::Network net(784, 1);
+            net.add<nn::Dense>(width, nn::Activation::relu());
+            net.add<nn::Dense>(width / 2, nn::Activation::relu());
+            net.add<nn::Dense>(10, nn::Activation::softmax());
+            net.compile(nn::Loss::CategoricalCrossEntropy, std::make_unique<nn::Adam>(1e-3f));
+            nn::FitOptions o;
+            o.epochs = 1;
+            o.batch_size = 256;
+            o.verbose = 0;
+            double tg = time_it([&] { net.fit(x, y, o); }, 2);
+            nn::set_backend(nn::Backend::CPU);
+            double tc = time_it([&] { net.fit(x, y, o); }, 2);
+            nn::set_backend(b);
+            std::printf("  MLP 784-%zu-%zu-10 train (batch 256): GPU %.0f samples/s, CPU %.0f samples/s\n", width,
+                        width / 2, N / tg, N / tc);
+        }
+        nn::set_backend(nn::Backend::CPU);
+    }
+
     std::printf("\nActivations (Gelem/s, 4M elements)\n");
     {
         nn::Matrix z = rnd(1024, 4096, rng), y(1024, 4096);

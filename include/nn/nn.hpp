@@ -6,6 +6,7 @@
 #include "matrix.hpp"
 #include "random.hpp"
 #include "kernels.hpp"
+#include "device.hpp"
 #include "fastmath.hpp"
 #include "activation.hpp"
 #include "layer.hpp"

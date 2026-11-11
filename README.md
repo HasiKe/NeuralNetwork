@@ -97,6 +97,49 @@ CMake options:
 | `NN_BUILD_EXAMPLES` / `NN_BUILD_TESTS` / `NN_BUILD_BENCHMARKS` | ON (top level) | extras |
 | `BUILD_SHARED_LIBS` | OFF | build `libnn.so` instead of `libnn.a` |
 
+### GPU acceleration
+
+GPU backends are opt-in CMake flags on top of `NN_BUILD_LIBRARY`. Every
+backend can be compiled in at the same time; the device is chosen at runtime.
+
+| Flag | Backend | Hardware | SDK |
+|---|---|---|---|
+| `NN_USE_OPENCL` | OpenCL 1.2 | Intel, AMD, NVIDIA, ARM Mali, Apple | OpenCL headers + ICD loader |
+| `NN_USE_VULKAN` | Vulkan compute | any Vulkan GPU (Linux, Windows, Android, macOS via MoltenVK) | Vulkan SDK / `libvulkan-dev` |
+| `NN_USE_CUDA` | CUDA + cuBLAS | NVIDIA | CUDA Toolkit |
+| `NN_USE_HIP` | HIP + hipBLAS | AMD (ROCm) | ROCm / `hipcc`, `libhipblas-dev` |
+| `NN_USE_SYCL` | SYCL | Intel GPUs, others via oneAPI plugins / AdaptiveCpp | SYCL compiler (`icpx -fsycl`) |
+| `NN_USE_GPU` | all of the above that are found | | |
+
+```bash
+cmake -S . -B build -DNN_BUILD_LIBRARY=ON -DNN_USE_GPU=ON
+cmake --build build -j
+NN_BACKEND=vulkan ./build/example_mnist_like     # or: opencl, cuda, hip, sycl, cpu
+```
+
+```cpp
+#include <nn/nn.hpp>
+if (!nn::set_backend(nn::Backend::CUDA))      // false if not compiled in / no device
+    nn::set_backend(nn::Backend::OpenCL);
+std::cout << nn::device_name() << "\n";
+nn::set_offload_threshold(1 << 24);           // smaller products stay on the CPU
+```
+
+How it works: the GPU computes the matrix multiplications, which make up
+almost all of the work in Dense, LSTM/GRU/SimpleRNN, Conv2D and RBF layers.
+Products smaller than the offload threshold (default 2^26 multiply-adds,
+`NN_OFFLOAD_THRESHOLD`) stay on the CPU because transfer and launch overhead
+would dominate. If a GPU call fails, the library prints a warning and falls
+back to the CPU. The whole test suite passes with every product forced onto
+the GPU (`NN_BACKEND=opencl NN_OFFLOAD_THRESHOLD=0 ./build/nn_tests`).
+
+Measured on the Intel N97's integrated UHD Graphics (24 EUs), including
+transfers: GEMM 1024³ ~80 (OpenCL) / ~90 (Vulkan) GFLOP/s vs ~50-60 on the CPU;
+MLP 784-2048-1024-10 training ~1.4x faster than the 4 CPU cores, small networks
+about equal. Discrete GPUs gain far more. OpenCL and Vulkan are tested on real
+hardware; CUDA and HIP are compiled against their SDKs but untested without
+NVIDIA/AMD hardware; SYCL is untested.
+
 ### Using the library in your project
 
 Install and use `find_package`:

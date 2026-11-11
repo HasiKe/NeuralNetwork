@@ -147,6 +147,63 @@ TEST(gemm_matches_naive) {
     }
 }
 
+TEST(gpu_backends_match_cpu) {
+    const std::size_t saved_threshold = nn::offload_threshold();
+    const nn::Backend saved_backend = nn::current_backend();
+    CHECK(nn::backend_from_string("OpenCL") == nn::Backend::OpenCL);
+    for (nn::Backend b : nn::compiled_backends()) {
+        if (b == nn::Backend::CPU) continue;
+        if (!nn::set_backend(b)) {
+            std::printf("  (%s compiled in, but no device available - skipped)\n", nn::to_string(b));
+            continue;
+        }
+        std::printf("  testing %s\n", nn::device_name().c_str());
+        nn::set_offload_threshold(0);  // force every product onto the GPU
+        nn::Rng rng(21);
+        const std::size_t shapes[][3] = {{1, 1, 1}, {5, 3, 7}, {33, 70, 17}, {130, 65, 200}};
+        for (auto& s : shapes)
+            for (int ta = 0; ta < 2; ++ta)
+                for (int tb = 0; tb < 2; ++tb)
+                    for (float beta : {0.0f, 0.5f}) {
+                        const std::size_t M = s[0], N = s[1], K = s[2], pad = 3;  // ld > width
+                        const std::size_t lda = (ta ? M : K) + pad, ldb = (tb ? K : N) + pad, ldc = N + pad;
+                        nn::Matrix A = random_matrix(ta ? K : M, lda, rng), B = random_matrix(tb ? N : K, ldb, rng);
+                        nn::Matrix C = random_matrix(M, ldc, rng), ref = C;
+                        for (std::size_t i = 0; i < M; ++i)
+                            for (std::size_t j = 0; j < N; ++j) {
+                                double acc = 0;
+                                for (std::size_t k = 0; k < K; ++k)
+                                    acc += (ta ? A(k, i) : A(i, k)) * (tb ? B(j, k) : B(k, j));
+                                ref(i, j) = static_cast<float>(1.5 * acc + beta * ref(i, j));
+                            }
+                        nn::kernels::gemm(ta, tb, M, N, K, 1.5f, A.data(), lda, B.data(), ldb, beta, C.data(), ldc);
+                        double err = 0;
+                        for (std::size_t i = 0; i < M; ++i)
+                            for (std::size_t j = 0; j < ldc; ++j)
+                                err = std::max(err, (double)std::fabs(C(i, j) - ref(i, j)));  // padding untouched too
+                        CHECK_MSG(err < 2e-3 * std::sqrt((double)K), "%s gemm %zux%zux%zu ta=%d tb=%d beta=%g err=%g",
+                                  nn::to_string(b), M, N, K, ta, tb, beta, err);
+                    }
+        // full training run on the GPU gives the same accuracy as the CPU
+        nn::Matrix x = {{0, 0}, {0, 1}, {1, 0}, {1, 1}};
+        nn::Matrix y = {{0}, {1}, {1}, {0}};
+        nn::Network net(2, 4);
+        net.add<nn::Dense>(8, nn::Activation::tanh());
+        net.add<nn::Dense>(1, nn::Activation::sigmoid());
+        net.compile(nn::Loss::BinaryCrossEntropy, std::make_unique<nn::Adam>(0.05f));
+        nn::FitOptions o;
+        o.epochs = 300;
+        o.batch_size = 4;
+        o.verbose = 0;
+        net.fit(x, y, o);
+        CHECK_MSG(net.evaluate_accuracy(x, y) == 1.0f, "%s: XOR not learned", nn::to_string(b));
+        CHECK(nn::current_backend() == b);  // no silent fallback happened
+    }
+    nn::set_backend(saved_backend);
+    nn::set_offload_threshold(saved_threshold);
+    CHECK(nn::current_backend() == saved_backend);
+}
+
 TEST(fastmath_accuracy) {
     double e_exp = 0, e_log = 0, e_tanh = 0, e_sig = 0;
     for (float x = -20; x <= 20; x += 0.0137f) {

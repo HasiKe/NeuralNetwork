@@ -1,0 +1,66 @@
+#version 450
+// Row-major SGEMM for the Vulkan backend (same tiling as the OpenCL kernel).
+// Regenerate the embedded SPIR-V with: tools/gen_spirv.sh
+#define TS 64
+#define TK 16
+#define WPT 4
+#define RTS 16
+
+layout(local_size_x = RTS, local_size_y = RTS, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer BufA { float A[]; };
+layout(std430, binding = 1) readonly buffer BufB { float B[]; };
+layout(std430, binding = 2) buffer BufC { float C[]; };
+
+layout(push_constant) uniform Params {
+    int M, N, K, lda, ldb, ldc, ta, tb;
+    float alpha, beta;
+} p;
+
+shared float As[TK][TS + 1];
+shared float Bs[TK][TS + 1];
+
+void main() {
+    const int tx = int(gl_LocalInvocationID.x), ty = int(gl_LocalInvocationID.y);
+    const int row0 = int(gl_WorkGroupID.y) * TS, col0 = int(gl_WorkGroupID.x) * TS;
+    const int tid = ty * RTS + tx;
+    float acc[WPT][WPT];
+    for (int i = 0; i < WPT; ++i)
+        for (int j = 0; j < WPT; ++j) acc[i][j] = 0.0;
+
+    for (int k0 = 0; k0 < p.K; k0 += TK) {
+        for (int l = tid; l < TS * TK; l += RTS * RTS) {
+            const int i = l / TK, k = l % TK;
+            const int gi = row0 + i, gk = k0 + k;
+            float av = 0.0;
+            if (gi < p.M && gk < p.K) av = p.ta != 0 ? A[gk * p.lda + gi] : A[gi * p.lda + gk];
+            As[k][i] = av;
+            const int j = l % TS, kk = l / TS;
+            const int gj = col0 + j, gk2 = k0 + kk;
+            float bv = 0.0;
+            if (gj < p.N && gk2 < p.K) bv = p.tb != 0 ? B[gj * p.ldb + gk2] : B[gk2 * p.ldb + gj];
+            Bs[kk][j] = bv;
+        }
+        barrier();
+        for (int k = 0; k < TK; ++k) {
+            float a[WPT], b[WPT];
+            for (int w = 0; w < WPT; ++w) {
+                a[w] = As[k][ty + RTS * w];
+                b[w] = Bs[k][tx + RTS * w];
+            }
+            for (int wi = 0; wi < WPT; ++wi)
+                for (int wj = 0; wj < WPT; ++wj) acc[wi][wj] = fma(a[wi], b[wj], acc[wi][wj]);
+        }
+        barrier();
+    }
+    for (int wi = 0; wi < WPT; ++wi) {
+        const int r = row0 + ty + RTS * wi;
+        if (r >= p.M) continue;
+        for (int wj = 0; wj < WPT; ++wj) {
+            const int c = col0 + tx + RTS * wj;
+            if (c >= p.N) continue;
+            const float v = p.alpha * acc[wi][wj];
+            C[r * p.ldc + c] = p.beta != 0.0 ? v + p.beta * C[r * p.ldc + c] : v;
+        }
+    }
+}

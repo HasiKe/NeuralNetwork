@@ -1,5 +1,7 @@
 #include "nn/kernels.hpp"
 
+#include "gpu/backend.hpp"
+
 #include <algorithm>
 #include <cstring>
 #include <vector>
@@ -163,6 +165,7 @@ void scale_c(std::size_t M, std::size_t N, real beta, real* C, std::size_t ldc) 
 void gemm(bool ta, bool tb, std::size_t M, std::size_t N, std::size_t K, real alpha, const real* A,
           std::size_t lda, const real* B, std::size_t ldb, real beta, real* C, std::size_t ldc) {
     if (M == 0 || N == 0) return;
+    if (K > 0 && alpha != 0 && gpu::try_gemm(ta, tb, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc)) return;
 #ifdef NN_USE_BLAS
     if (K > 0) {
         cblas_sgemm(CblasRowMajor, ta ? CblasTrans : CblasNoTrans, tb ? CblasTrans : CblasNoTrans,

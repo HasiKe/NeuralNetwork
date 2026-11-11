@@ -100,6 +100,52 @@ CMake-Optionen:
 | `NN_BUILD_EXAMPLES` / `NN_BUILD_TESTS` / `NN_BUILD_BENCHMARKS` | ON (Top-Level) | Extras |
 | `BUILD_SHARED_LIBS` | OFF | `libnn.so` statt `libnn.a` |
 
+### GPU-Beschleunigung
+
+GPU-Backends sind optionale CMake-Flags zusätzlich zu `NN_BUILD_LIBRARY`.
+Alle Backends können gleichzeitig einkompiliert werden; das Gerät wird zur
+Laufzeit gewählt.
+
+| Flag | Backend | Hardware | SDK |
+|---|---|---|---|
+| `NN_USE_OPENCL` | OpenCL 1.2 | Intel, AMD, NVIDIA, ARM Mali, Apple | OpenCL-Header + ICD-Loader |
+| `NN_USE_VULKAN` | Vulkan Compute | jede Vulkan-GPU (Linux, Windows, Android, macOS über MoltenVK) | Vulkan SDK / `libvulkan-dev` |
+| `NN_USE_CUDA` | CUDA + cuBLAS | NVIDIA | CUDA Toolkit |
+| `NN_USE_HIP` | HIP + hipBLAS | AMD (ROCm) | ROCm / `hipcc`, `libhipblas-dev` |
+| `NN_USE_SYCL` | SYCL | Intel-GPUs, andere über oneAPI-Plugins / AdaptiveCpp | SYCL-Compiler (`icpx -fsycl`) |
+| `NN_USE_GPU` | alle gefundenen der obigen | | |
+
+```bash
+cmake -S . -B build -DNN_BUILD_LIBRARY=ON -DNN_USE_GPU=ON
+cmake --build build -j
+NN_BACKEND=vulkan ./build/example_mnist_like     # oder: opencl, cuda, hip, sycl, cpu
+```
+
+```cpp
+#include <nn/nn.hpp>
+if (!nn::set_backend(nn::Backend::CUDA))      // false, wenn nicht einkompiliert / kein Gerät
+    nn::set_backend(nn::Backend::OpenCL);
+std::cout << nn::device_name() << "\n";
+nn::set_offload_threshold(1 << 24);           // kleinere Produkte bleiben auf der CPU
+```
+
+Funktionsweise: Die GPU berechnet die Matrixmultiplikationen, die fast die
+gesamte Arbeit in Dense-, LSTM/GRU/SimpleRNN-, Conv2D- und RBF-Schichten
+ausmachen. Produkte unter der Offload-Schwelle (Standard 2^26
+Multiply-Adds, `NN_OFFLOAD_THRESHOLD`) bleiben auf der CPU, weil Transfer und
+Kernelstart sonst dominieren. Schlägt ein GPU-Aufruf fehl, gibt die Bibliothek
+eine Warnung aus und rechnet auf der CPU weiter. Die komplette Testsuite
+besteht auch, wenn jedes Produkt auf die GPU gezwungen wird
+(`NN_BACKEND=opencl NN_OFFLOAD_THRESHOLD=0 ./build/nn_tests`).
+
+Gemessen auf der integrierten UHD Graphics des Intel N97 (24 EUs), inklusive
+Transfers: GEMM 1024³ ~80 (OpenCL) / ~90 (Vulkan) GFLOP/s gegenüber ~50-60 auf
+der CPU; MLP 784-2048-1024-10 trainiert ~1,4x schneller als auf den 4
+CPU-Kernen, kleine Netze etwa gleich schnell. Dedizierte GPUs gewinnen
+deutlich mehr. OpenCL und Vulkan sind auf echter Hardware getestet; CUDA und
+HIP werden gegen ihre SDKs kompiliert, sind ohne NVIDIA/AMD-Hardware aber
+ungetestet; SYCL ist ungetestet.
+
 ### Einbinden in eigene Projekte
 
 Installieren und `find_package` nutzen:
