@@ -144,11 +144,19 @@ void Network::update_weights(const std::vector<float>& inputs, float l_rate) {
     // Momentum-Faktor für stabileres Training
     const float momentum = 0.9f;
     
-    // Speichere frühere Gewichtsänderungen für Momentum (statische Variable)
-    static std::vector<std::vector<std::vector<float>>> prev_deltas;
-    
-    // Initialisiere Gewichtsänderungen bei der ersten Ausführung
-    if (prev_deltas.empty()) {
+    // Frühere Gewichtsänderungen für Momentum (pro Netzwerk, nicht statisch:
+    // ein statischer Puffer passte nach dem Laden oder bei mehreren Netzen
+    // nicht mehr zur Netzform und führte zu Zugriffen außerhalb der Grenzen)
+    auto& prev_deltas = m_prev_deltas;
+    bool shape_ok = prev_deltas.size() == m_nLayers;
+    for (size_t i = 0; shape_ok && i < m_nLayers; i++) {
+        const auto& neurons = m_layers[i].get_neurons();
+        shape_ok = prev_deltas[i].size() == neurons.size();
+        for (size_t j = 0; shape_ok && j < neurons.size(); j++)
+            shape_ok = prev_deltas[i][j].size() == neurons[j].get_weights().size();
+    }
+    if (!shape_ok) {
+        prev_deltas.clear();
         prev_deltas.resize(m_nLayers);
         for (size_t i = 0; i < m_nLayers; i++) {
             prev_deltas[i].resize(m_layers[i].get_neurons().size());
@@ -372,6 +380,11 @@ bool Network::validate_file_stream(const std::ios& stream, const std::string& fi
 * Save the network to a file with activation type information
 */
 bool Network::save(const std::string& filename) {
+    // Never write NaN/inf weights: they cannot be loaded again
+    if (!has_finite_weights()) {
+        std::cerr << "Error: network contains NaN/inf weights (training diverged), not saving." << std::endl;
+        return false;
+    }
     std::ofstream file(filename);
     if (!validate_file_stream(file, filename, false)) {
         return false;
@@ -392,6 +405,17 @@ bool Network::save(const std::string& filename) {
 }
 
 /*
+* True if every weight is a finite number
+*/
+bool Network::has_finite_weights() const {
+    for (const auto& layer : m_layers)
+        for (const auto& neuron : layer.get_neurons())
+            for (float w : neuron.get_weights())
+                if (!std::isfinite(w)) return false;
+    return true;
+}
+
+/*
 * Load the network from a file with activation type information
 */
 bool Network::load(const std::string& filename) {
@@ -406,13 +430,11 @@ bool Network::load(const std::string& filename) {
         file >> n_layers;
         if (!file.good()) throw std::runtime_error("Failed to read layer count");
         
-        m_nLayers = n_layers;
-
-        // Clear existing layers
-        m_layers.clear();
+        // Load into temporaries; the network is only replaced when the whole file was read
+        std::vector<Layer> layers;
 
         // Load each layer with its activation type
-        for (size_t i = 0; i < m_nLayers; ++i) {
+        for (size_t i = 0; i < n_layers; ++i) {
             // Read activation type
             int activation_type_int;
             file >> activation_type_int;
@@ -427,9 +449,12 @@ bool Network::load(const std::string& filename) {
             // Set the activation type for all neurons
             layer.set_activation_type(activation_type);
             
-            m_layers.push_back(layer);
+            layers.push_back(layer);
         }
 
+        m_layers = std::move(layers);
+        m_nLayers = n_layers;
+        m_prev_deltas.clear();
         file.close();
         return true;
     } catch (const std::exception& e) {
@@ -498,7 +523,10 @@ void Network::load_weights(Neuron& neuron, std::ifstream& file) {
     std::vector<float> weights(n_weights);
     for (size_t i = 0; i < n_weights; ++i) {
         if (!(file >> weights[i])) {
-            throw std::runtime_error("Failed to read weight value");
+            throw std::runtime_error("Failed to read weight value (file corrupt or contains NaN)");
+        }
+        if (!std::isfinite(weights[i])) {
+            throw std::runtime_error("Weight value is NaN/inf");
         }
     }
 

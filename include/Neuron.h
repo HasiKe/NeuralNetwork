@@ -52,11 +52,7 @@ private:
     float m_delta;
     ActivationType m_activation_type;
 
-    // Function pointers for activation and derivative
-    std::function<float(float)> m_activation_function;
-    std::function<float(float)> m_derivative_function;
 
 private:
     void initWeights(int n_weights);
-    void setupActivationFunctions();
 };

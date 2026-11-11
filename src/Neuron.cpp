@@ -15,7 +15,6 @@ Neuron::Neuron() :
     m_output(0.0f), 
     m_delta(0.0f),
     m_activation_type(ActivationType::SIGMOID) {
-    setupActivationFunctions();
 }
 
 /*
@@ -28,7 +27,6 @@ Neuron::Neuron(int n_weights, ActivationType activation_type) :
     m_delta(0.0f),
     m_activation_type(activation_type) {
     this->initWeights(n_weights);
-    setupActivationFunctions();
 }
 
 /*
@@ -57,40 +55,21 @@ void Neuron::initWeights(int n_weights) {
 }
 
 /*
-* Set up activation function and its derivative based on activation type
+* Activation function and its derivative.
+*
+* Computed with a switch on the neuron's own values instead of stored lambdas:
+* lambdas capturing `this` kept pointing at the original object after a Neuron
+* was copied (vector growth, Layer copies, loading), so derivatives were
+* computed from stale or freed memory and training produced NaN weights.
 */
-void Neuron::setupActivationFunctions() {
-    switch (m_activation_type) {
+static float apply_activation(ActivationType type, float x) {
+    switch (type) {
+        case ActivationType::RELU:       return x > 0.0f ? x : 0.0f;
+        case ActivationType::LEAKY_RELU: return x > 0.0f ? x : 0.01f * x;
+        case ActivationType::TANH:       return std::tanh(x);
+        case ActivationType::ELU:        return x > 0.0f ? x : 0.01f * (std::exp(x) - 1.0f);
         case ActivationType::SIGMOID:
-            m_activation_function = [](float x) { return 1.0f / (1.0f + std::exp(-x)); };
-            m_derivative_function = [this](float) { return m_output * (1.0f - m_output); };
-            break;
-            
-        case ActivationType::RELU:
-            m_activation_function = [](float x) { return std::max(0.0f, x); };
-            m_derivative_function = [](float x) { return x > 0.0f ? 1.0f : 0.0f; };
-            break;
-            
-        case ActivationType::LEAKY_RELU:
-            m_activation_function = [](float x) { return x > 0.0f ? x : 0.01f * x; };
-            m_derivative_function = [](float x) { return x > 0.0f ? 1.0f : 0.01f; };
-            break;
-            
-        case ActivationType::TANH:
-            m_activation_function = [](float x) { return std::tanh(x); };
-            m_derivative_function = [this](float) { return 1.0f - m_output * m_output; };
-            break;
-            
-        case ActivationType::ELU:
-            m_activation_function = [](float x) { return x > 0.0f ? x : 0.01f * (std::exp(x) - 1.0f); };
-            m_derivative_function = [](float x) { return x > 0.0f ? 1.0f : 0.01f * std::exp(x); };
-            break;
-            
-        default:
-            // Default to sigmoid
-            m_activation_function = [](float x) { return 1.0f / (1.0f + std::exp(-x)); };
-            m_derivative_function = [this](float) { return m_output * (1.0f - m_output); };
-            break;
+        default:                         return 1.0f / (1.0f + std::exp(-x));
     }
 }
 
@@ -99,7 +78,6 @@ void Neuron::setupActivationFunctions() {
 */
 void Neuron::set_activation_type(ActivationType type) {
     m_activation_type = type;
-    setupActivationFunctions();
 }
 
 /*
@@ -133,12 +111,20 @@ void Neuron::activate(const std::vector<float>& inputs) {
 * Apply activation function
 */
 void Neuron::transfer() {
-    m_output = m_activation_function(m_activation);
+    m_output = apply_activation(m_activation_type, m_activation);
 }
 
 /*
 * Calculate derivative of activation function
 */
 float Neuron::transfer_derivative() const {
-    return m_derivative_function(m_activation);
+    const float x = m_activation;
+    switch (m_activation_type) {
+        case ActivationType::RELU:       return x > 0.0f ? 1.0f : 0.0f;
+        case ActivationType::LEAKY_RELU: return x > 0.0f ? 1.0f : 0.01f;
+        case ActivationType::TANH:       return 1.0f - m_output * m_output;
+        case ActivationType::ELU:        return x > 0.0f ? 1.0f : 0.01f * std::exp(x);
+        case ActivationType::SIGMOID:
+        default:                         return m_output * (1.0f - m_output);
+    }
 }

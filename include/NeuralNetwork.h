@@ -42,11 +42,15 @@ public:
 
     // Save and load functionality
     bool save(const std::string& filename);
+    // True if no weight is NaN/inf
+    bool has_finite_weights() const;
     bool load(const std::string& filename);
 
 private:
     size_t m_nLayers;
     std::vector<Layer> m_layers;
+    // Previous weight changes per layer/neuron/weight (momentum); rebuilt when the shape changes
+    std::vector<std::vector<std::vector<float>>> m_prev_deltas;
 
     // Helper methods for saving and loading
     void save_layer(const Layer& layer, std::ofstream& file);
