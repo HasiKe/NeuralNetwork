@@ -285,7 +285,7 @@ void backward_serial(const Activation& act, std::size_t rows, std::size_t cols, 
 
 
 // Split large blocks into row chunks processed by different threads.
-constexpr std::size_t kParallelElems = std::size_t(1) << 16;
+[[maybe_unused]] constexpr std::size_t kParallelElems = std::size_t(1) << 16;
 
 template <class F>
 void for_row_chunks(std::size_t rows, std::size_t cols, F&& f) {

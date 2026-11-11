@@ -77,7 +77,7 @@ namespace {
 constexpr std::size_t MB = 32;   // rows per tile
 constexpr std::size_t NB = 256;  // cols per tile (B panel KB x NB fits in L2)
 constexpr std::size_t KB = 256;  // depth per block
-constexpr std::size_t kParallelFlops = std::size_t(1) << 18;
+[[maybe_unused]] constexpr std::size_t kParallelFlops = std::size_t(1) << 18;
 
 // C[0..rows, 0..nb] += alpha * a(i, k) * b(k, j) for k in [k0, k0+kb)
 // a(i,k) = A[i*sai + k*sak], b(k, j) = Bp[(k - k0)*ldbp + j]

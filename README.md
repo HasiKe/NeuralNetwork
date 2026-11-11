@@ -62,7 +62,7 @@ Measured on an Intel N97 (4 cores, AVX2), `./build/nn_bench`:
 ## Build
 
 Requirements: C++17 compiler (GCC ≥ 8, Clang ≥ 7, MSVC 2019), CMake ≥ 3.14.
-OpenMP is used when available.
+OpenMP is used when available. On macOS, Apple Clang has no OpenMP runtime: install it with `brew install libomp` (found automatically), otherwise the kernels run single-threaded.
 
 **Classic program (default).** Without flags the build is the same as
 before: the original single-hidden-layer network (`src/main.cpp`, `Neuron` /
@@ -79,11 +79,13 @@ cd ../bin && ./NN
 with `NN_BUILD_LIBRARY`:
 
 ```bash
-cmake -S . -B build -DNN_BUILD_LIBRARY=ON   # Release by default
+cmake -S . -B build -DNN_BUILD_LIBRARY=ON
 cmake --build build -j
-ctest --test-dir build                      # or ./build/nn_tests
+ctest --test-dir build
 ./build/nn_bench
 ```
+
+The build type defaults to Release. `ctest` runs the unit tests; `./build/nn_tests` runs them directly.
 
 CMake options:
 
@@ -129,9 +131,11 @@ Open `viz/viewer.html` and load the file with "Open file…" or drag and drop.
 To try the bundled demos (MLP, CNN, LSTM, spiking network):
 
 ```bash
-./build/example_viz_demo viz              # writes viz/*.viz.json
-cd viz && python3 -m http.server          # http://localhost:8000/viewer.html
+./build/example_viz_demo viz
+cd viz && python3 -m http.server
 ```
+
+The first command writes `viz/*.viz.json`; then open http://localhost:8000/viewer.html.
 
 Large layers are subsampled for display (`RecordOptions`). The viewer loads
 three.js from a CDN, so it needs an internet connection.
@@ -153,8 +157,10 @@ backend can be compiled in at the same time; the device is chosen at runtime.
 ```bash
 cmake -S . -B build -DNN_BUILD_LIBRARY=ON -DNN_USE_GPU=ON
 cmake --build build -j
-NN_BACKEND=vulkan ./build/example_mnist_like     # or: opencl, cuda, hip, sycl, cpu
+NN_BACKEND=vulkan ./build/example_mnist_like
 ```
+
+`NN_BACKEND` accepts `opencl`, `vulkan`, `cuda`, `hip`, `sycl` or `cpu`.
 
 ```cpp
 #include <nn/nn.hpp>

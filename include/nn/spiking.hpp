@@ -129,6 +129,7 @@ public:
     const real* voltage(PopId pop) const { return m_v.data() + m_pops.at(pop).offset; }
     real time() const { return static_cast<real>(m_step) * m_dt; }
     real dt() const { return m_dt; }
+    real tau_syn() const { return m_tau_syn; }
     /// Weight of every synapse (CSR order, after finalize()).
     std::vector<real>& weights() { return m_w; }
     /// CSR synapse table (after finalize()): synapses of neuron i are

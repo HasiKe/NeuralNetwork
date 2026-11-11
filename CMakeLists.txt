@@ -37,17 +37,21 @@ endif()
 
 # ---------------------------------------------------------------- classic program
 if(NN_BUILD_LEGACY)
-    add_executable(NN
+    # Target name differs from the library target `nn` only by more than case:
+    # on case-insensitive file systems (macOS, Windows) `NN` and `nn` would share
+    # the build directory CMakeFiles/nn.dir and break the build. Binary stays bin/NN.
+    add_executable(nn_classic
         src/main.cpp
         src/Layer.cpp
         src/NeuralNetwork.cpp
         src/Neuron.cpp)
-    target_include_directories(NN PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    set_target_properties(NN PROPERTIES
+    target_include_directories(nn_classic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    set_target_properties(nn_classic PROPERTIES
+        OUTPUT_NAME NN
         CXX_STANDARD 14
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin)  # run from bin/: reads ../data
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(NN PRIVATE -Wall -Wpedantic)
+        target_compile_options(nn_classic PRIVATE -Wall -Wpedantic)
     endif()
 endif()
 
@@ -109,12 +113,24 @@ endif()
 
 set(NN_CONFIG_DEPS "")
 if(NN_USE_OPENMP)
+    # Apple Clang ships without the OpenMP runtime; use Homebrew's libomp if installed
+    if(APPLE AND NOT DEFINED OpenMP_ROOT)
+        foreach(_omp /opt/homebrew/opt/libomp /usr/local/opt/libomp)
+            if(EXISTS "${_omp}/include/omp.h")
+                set(OpenMP_ROOT "${_omp}")
+                break()
+            endif()
+        endforeach()
+    endif()
     find_package(OpenMP COMPONENTS CXX)
     if(OpenMP_CXX_FOUND)
         target_link_libraries(nn PRIVATE OpenMP::OpenMP_CXX)
         string(APPEND NN_CONFIG_DEPS "find_dependency(OpenMP COMPONENTS CXX)\n")
     else()
         message(STATUS "nn: OpenMP not found, kernels run single-threaded")
+        if(APPLE)
+            message(STATUS "nn: for multi-threading on macOS run: brew install libomp")
+        endif()
     endif()
 endif()
 if(NOT OpenMP_CXX_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

@@ -146,8 +146,8 @@ std::size_t Network::connect_one_to_one(PopId pre, PopId post, real weight) {
 
 void Network::enable_stdp(PopId pre, PopId post, const STDPParams& p) {
     if (m_finalized) throw std::logic_error("spiking: enable_stdp must be called before the first step");
-    m_pops.at(pre);
-    m_pops.at(post);
+    (void)m_pops.at(pre);  // range check, throws std::out_of_range
+    (void)m_pops.at(post);
     if (m_rules.size() >= 32000) throw std::length_error("spiking: too many plasticity rules");
     m_rules.push_back({pre, post, p});
 }

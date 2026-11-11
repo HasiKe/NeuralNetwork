@@ -65,7 +65,7 @@ Gemessen auf einem Intel N97 (4 Kerne, AVX2), `./build/nn_bench`:
 ## Bauen
 
 Voraussetzungen: C++17-Compiler (GCC ≥ 8, Clang ≥ 7, MSVC 2019), CMake ≥ 3.14.
-OpenMP wird genutzt, falls vorhanden.
+OpenMP wird genutzt, falls vorhanden. Unter macOS fehlt Apple Clang die OpenMP-Laufzeit: mit `brew install libomp` installieren (wird automatisch gefunden), sonst laufen die Kernel einzeln.
 
 **Klassisches Programm (Standard).** Ohne Flags baut das Projekt wie
 früher: das ursprüngliche Netz mit einer versteckten Schicht
@@ -82,11 +82,13 @@ cd ../bin && ./NN
 Benchmarks wird mit `NN_BUILD_LIBRARY` aktiviert:
 
 ```bash
-cmake -S . -B build -DNN_BUILD_LIBRARY=ON   # standardmäßig Release
+cmake -S . -B build -DNN_BUILD_LIBRARY=ON
 cmake --build build -j
-ctest --test-dir build                      # oder ./build/nn_tests
+ctest --test-dir build
 ./build/nn_bench
 ```
+
+Standardmäßig wird als Release gebaut. `ctest` führt die Unit-Tests aus; `./build/nn_tests` startet sie direkt.
 
 CMake-Optionen:
 
@@ -133,9 +135,11 @@ spikes.save("spiking.viz.json");
 laden. Die mitgelieferten Demos (MLP, CNN, LSTM, Spiking-Netz):
 
 ```bash
-./build/example_viz_demo viz              # schreibt viz/*.viz.json
-cd viz && python3 -m http.server          # http://localhost:8000/viewer.html
+./build/example_viz_demo viz
+cd viz && python3 -m http.server
 ```
+
+Der erste Befehl schreibt `viz/*.viz.json`; danach http://localhost:8000/viewer.html öffnen.
 
 Große Schichten werden für die Anzeige ausgedünnt (`RecordOptions`). Der
 Viewer lädt three.js von einem CDN und braucht daher eine Internetverbindung.
@@ -158,8 +162,10 @@ Laufzeit gewählt.
 ```bash
 cmake -S . -B build -DNN_BUILD_LIBRARY=ON -DNN_USE_GPU=ON
 cmake --build build -j
-NN_BACKEND=vulkan ./build/example_mnist_like     # oder: opencl, cuda, hip, sycl, cpu
+NN_BACKEND=vulkan ./build/example_mnist_like
 ```
+
+`NN_BACKEND` akzeptiert `opencl`, `vulkan`, `cuda`, `hip`, `sycl` oder `cpu`.
 
 ```cpp
 #include <nn/nn.hpp>
