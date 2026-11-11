@@ -21,3 +21,4 @@
 #include "network.hpp"
 #include "data.hpp"
 #include "spiking.hpp"
+#include "viz.hpp"

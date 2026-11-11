@@ -1,4 +1,5 @@
 // Self-contained test suite (no external framework).
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -513,6 +514,61 @@ TEST(spiking_propagation_and_stdp) {
     auto a = big.add_population(1000, nn::spiking::IzhikevichParams{});
     std::size_t c = big.connect(a, a, 0.05f, 1.0f);
     CHECK_MSG(c > 47000 && c < 53000, "synapses %zu", c);
+}
+
+TEST(viz_recorders) {
+    nn::Network net(1 * 6 * 6, 3);
+    net.add<nn::Conv2D>(nn::Shape3{1, 6, 6}, 2, 3, 1, 1, nn::Activation::relu());
+    net.add<nn::Dense>(5, nn::Activation::tanh());
+    net.add<nn::Dense>(2, nn::Activation::softmax());
+    net.compile(nn::Loss::CategoricalCrossEntropy, std::make_unique<nn::Adam>(1e-2f));
+    nn::Rng rng(1);
+    nn::Matrix x(10, 36), y(10, 2);
+    for (std::size_t i = 0; i < x.size(); ++i) x.data()[i] = rng.uniform();
+    for (std::size_t i = 0; i < 10; ++i) y(i, i % 2) = 1;
+    nn::viz::RecordOptions ro;
+    ro.samples = 3;
+    ro.max_edges_per_layer = 7;
+    nn::viz::NetworkRecorder rec(net, ro);
+    rec.snapshot(x, &y, "a", 0.5f);
+    rec.snapshot(x, nullptr, "b \"q\"");
+    CHECK(rec.snapshot_count() == 2);
+    const std::string j = rec.to_json();
+    CHECK(j.rfind("{\"format\":\"nn-viz\"", 0) == 0);
+    CHECK(j.find("\"shape\":[1,6,6]") != std::string::npos);
+    CHECK(j.find("\"shape\":[2,6,6]") != std::string::npos);
+    CHECK(j.find("\"label\":\"b \\\"q\\\"\"") != std::string::npos);
+    CHECK(j.find("nan") == std::string::npos && j.find("inf") == std::string::npos);
+    int depth = 0, max_depth = 0;  // brackets balanced
+    for (char c : j) {
+        depth += (c == '[' || c == '{') - (c == ']' || c == '}');
+        max_depth = std::max(max_depth, depth);
+        if (depth < 0) break;
+    }
+    CHECK(depth == 0 && max_depth >= 4);
+
+    namespace sp = nn::spiking;
+    sp::Network sn(0.5f, 5.0f, 3);
+    auto a = sn.add_population(300, sp::LIFParams{}, "a");
+    auto b = sn.add_population(100, sp::IzhikevichParams::fast_spiking(), "b");
+    sn.connect(a, b, 0.2f, 1.0f, 0.0f);
+    sn.set_bias_current(a, 3.0f);
+    sn.finalize();
+    nn::viz::SpikeRecorder sr(sn, 200, 50);
+    std::size_t spikes = 0;
+    for (int s = 0; s < 200; ++s) {
+        sn.step();
+        sr.record_step();
+        spikes += sn.spikes().size();
+    }
+    const std::string k = sr.to_json();
+    CHECK(spikes > 0);
+    CHECK(k.find("\"kind\":\"spiking\"") != std::string::npos);
+    CHECK(k.find("\"model\":\"Izhikevich\"") != std::string::npos);
+    const std::size_t pop_at = k.find("\"pop\":[");
+    CHECK(pop_at != std::string::npos);
+    const std::size_t pop_end = k.find(']', pop_at);
+    CHECK(std::count(k.begin() + pop_at, k.begin() + pop_end, ',') + 1 == 200);  // subsampled to 200
 }
 
 }  // namespace

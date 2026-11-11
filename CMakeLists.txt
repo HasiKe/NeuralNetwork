@@ -68,6 +68,7 @@ set(NN_SOURCES
     src/network.cpp
     src/optimizer.cpp
     src/spiking.cpp
+    src/viz.cpp
     src/layers/conv.cpp
     src/layers/dense.cpp
     src/layers/dropout.cpp
@@ -216,7 +217,7 @@ endif()
 
 # ---------------------------------------------------------------- extras
 if(NN_BUILD_EXAMPLES)
-    foreach(ex seeds xor sequence mnist_like spiking)
+    foreach(ex seeds xor sequence mnist_like spiking viz_demo)
         add_executable(example_${ex} examples/${ex}.cpp)
         target_link_libraries(example_${ex} PRIVATE nn::nn)
     endforeach()

@@ -4,3 +4,4 @@ lib/
 .vscode/
 *.nnet
 saved_network.txt
+viz/*.viz.json

@@ -122,12 +122,19 @@ public:
     std::size_t neuron_count() const { return m_n; }
     std::size_t synapse_count() const { return m_post.size() + m_coo.size(); }
     std::size_t population_size(PopId pop) const { return m_pops.at(pop).n; }
+    std::size_t population_count() const { return m_pops.size(); }
+    const std::string& population_name(PopId pop) const { return m_pops.at(pop).name; }
+    Model population_model(PopId pop) const { return m_pops.at(pop).model; }
     std::uint32_t first_neuron(PopId pop) const { return m_pops.at(pop).offset; }
     const real* voltage(PopId pop) const { return m_v.data() + m_pops.at(pop).offset; }
     real time() const { return static_cast<real>(m_step) * m_dt; }
     real dt() const { return m_dt; }
     /// Weight of every synapse (CSR order, after finalize()).
     std::vector<real>& weights() { return m_w; }
+    /// CSR synapse table (after finalize()): synapses of neuron i are
+    /// [synapse_offsets()[i], synapse_offsets()[i+1]) with targets synapse_targets().
+    const std::vector<std::uint32_t>& synapse_offsets() const { return m_row; }
+    const std::vector<std::uint32_t>& synapse_targets() const { return m_post; }
 
 private:
     struct Population {

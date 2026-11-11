@@ -30,6 +30,7 @@ public:
     void save(std::ostream& os) const override;
     void load(std::istream& is) override;
 
+    Shape3 input_shape() const { return m_shape; }
     Shape3 output_shape() const { return {m_filters, m_oh, m_ow}; }
 
 private:
@@ -58,6 +59,7 @@ public:
     void save(std::ostream& os) const override;
     void load(std::istream& is) override;
 
+    Shape3 input_shape() const { return m_shape; }
     Shape3 output_shape() const { return {m_shape.channels, m_oh, m_ow}; }
 
 private:

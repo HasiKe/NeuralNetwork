@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nn 3D Viewer</title>
+<style>
+  :root {
+    --bg: #05070c; --panel: rgba(12, 16, 26, 0.86); --line: rgba(140, 160, 200, 0.18);
+    --text: #dfe6f3; --muted: #8b97ad; --accent: #ffb547; --cool: #4fc3ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 300px; max-height: calc(100% - 24px); overflow: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 14px 10px;
+    backdrop-filter: blur(6px); }
+  #panel h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: .02em; }
+  #panel .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+  .row label { color: var(--muted); min-width: 74px; }
+  .row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .row select, .row button, .file { background: #141b2b; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  .row button:hover, .file:hover { border-color: var(--accent); }
+  .file input { display: none; }
+  .val { font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+  .sect { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+  .sect h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; }
+  #stats div { display: flex; justify-content: space-between; }
+  #stats b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  #bars { display: flex; flex-direction: column; gap: 3px; }
+  .bar { display: grid; grid-template-columns: 26px 1fr 46px; align-items: center; gap: 6px; font-size: 12px; }
+  .bar i { display: block; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #ff8a2a, #ffd36b); }
+  .bar.t span:first-child { color: var(--accent); font-weight: 700; }
+  canvas.chart { width: 100%; height: 70px; display: block; }
+  #hover { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 9px; font-size: 12px; display: none; white-space: nowrap; }
+  #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(5,7,12,.8); font-size: 20px; border: 3px dashed var(--accent); }
+  #empty { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); text-align: center; pointer-events: none; padding: 16px; }
+  #raster { position: fixed; left: 324px; bottom: 12px; width: calc(100% - 336px); height: 110px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; display: none; }
+  .lbl { color: var(--muted); font-size: 11px; background: rgba(5,7,12,.55); padding: 1px 6px; border-radius: 4px;
+    white-space: nowrap; }
+  .legend { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .legend i { flex: 1; height: 6px; border-radius: 3px;
+    background: linear-gradient(90deg, #39c8ff, #0e1420 50%, #ff9a2e 80%, #fff3c4); }
+  @media (max-width: 700px) {
+    #panel { width: auto; right: 12px; max-height: 45%; }
+    #raster { left: 12px; width: calc(100% - 24px); height: 80px; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="view"></div>
+<div id="empty">Load a <code>.viz.json</code> file (button or drag &amp; drop)<br>created with <code>nn::viz::NetworkRecorder</code> or <code>nn::viz::SpikeRecorder</code>.</div>
+
+<div id="panel">
+  <h1>nn 3D Viewer</h1>
+  <div class="sub" id="subtitle">no model loaded</div>
+  <div class="row">
+    <span class="file">Open file…<input type="file" id="file" accept=".json"></span>
+    <select id="demo" title="Bundled demo files (needs a local web server)">
+      <option value="">Demos…</option>
+      <option value="mlp.viz.json">MLP (spiral)</option>
+      <option value="cnn.viz.json">CNN (shapes)</option>
+      <option value="lstm.viz.json">LSTM (sequence)</option>
+      <option value="spiking.viz.json">Spiking network</option>
+    </select>
+  </div>
+
+  <div id="netControls" style="display:none">
+    <div class="sect"><h2>Training</h2>
+      <div class="row"><label>Snapshot</label><input type="range" id="snap" min="0" max="0" value="0"><span class="val" id="snapVal"></span></div>
+      <div class="row"><button id="playSnaps">▶ Play training</button></div>
+      <canvas class="chart" id="lossChart"></canvas>
+      <div id="stats"></div>
+    </div>
+    <div class="sect"><h2>Signal flow</h2>
+      <div class="row"><label>Sample</label><select id="sample"></select><button id="playFlow" title="Pause / play the forward-pass animation">❚❚</button></div>
+      <div class="row"><label>Speed</label><input type="range" id="flowSpeed" min="0.1" max="3" step="0.1" value="1"></div>
+      <div class="row"><label>Connections</label><input type="range" id="edgeAlpha" min="0" max="1" step="0.05" value="0.55"></div>
+      <div class="row"><label><input type="checkbox" id="particles" checked> pulses</label><label><input type="checkbox" id="labels" checked> labels</label></div>
+      <div class="legend"><span>−</span><i></i><span>+ activation</span></div>
+    </div>
+    <div class="sect"><h2>Output</h2><div id="bars"></div></div>
+  </div>
+
+  <div id="spkControls" style="display:none">
+    <div class="sect"><h2>Simulation</h2>
+      <div class="row"><label>Time</label><input type="range" id="frame" min="0" max="0" value="0"><span class="val" id="frameVal"></span></div>
+      <div class="row"><button id="playSpk">❚❚ Pause</button><label>Speed</label><input type="range" id="spkSpeed" min="1" max="40" step="1" value="8"></div>
+      <div class="row"><label>Synapses</label><input type="range" id="synAlpha" min="0" max="1" step="0.05" value="0.35"></div>
+      <div id="pops"></div>
+    </div>
+  </div>
+  <div class="sect" style="color:var(--muted);font-size:11px">Drag to orbit · scroll to zoom · right-drag to pan · hover a neuron for its value</div>
+</div>
+
+<canvas id="raster"></canvas>
+<div id="hover"></div>
+<div id="drop">Drop .viz.json file</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------- renderer
+const view = $('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setClearColor(0x05070c);
+view.appendChild(renderer.domElement);
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.style.cssText = 'position:fixed;inset:0;pointer-events:none';
+document.body.appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05070c);
+scene.fog = new THREE.FogExp2(0x05070c, 0.012);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.35;
+renderer.domElement.addEventListener('pointerdown', () => (controls.autoRotate = false));
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.4, 0.55);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+  labelRenderer.setSize(w, h);
+  camera.aspect = w / h;
+  // keep the model centred in the free area to the right of the control panel
+  if (w > 700) camera.setViewOffset(w, h, -162, 0, w, h);
+  else camera.clearViewOffset();
+  camera.updateProjectionMatrix();
+  const r = $('raster');
+  r.width = r.clientWidth * devicePixelRatio;
+  r.height = r.clientHeight * devicePixelRatio;
+}
+addEventListener('resize', resize);
+
+// ---------------------------------------------------------------- colours
+const tmpColor = new THREE.Color();
+const COLD = new THREE.Color(0x39c8ff), DARK = new THREE.Color(0x2a3550),
+      WARM = new THREE.Color(0xff9a2e), HOT = new THREE.Color(0xfff3c4);
+// v in [-1, 1] -> colour (values above ~0.6 bloom)
+function activationColor(v, out) {
+  if (v >= 0) {
+    if (v < 0.6) out.copy(DARK).lerp(WARM, v / 0.6);
+    else out.copy(WARM).lerp(HOT, (v - 0.6) / 0.4);
+    return out.multiplyScalar(0.55 + 1.2 * v);
+  }
+  return out.copy(DARK).lerp(COLD, Math.min(1, -v)).multiplyScalar(0.55 + 0.9 * -v);
+}
+const POP_COLORS = [0xff9a2e, 0x39c8ff, 0x7dff8a, 0xff5fa2, 0xc59bff, 0xffe066, 0x5ff2e0, 0xff7b5c];
+
+const dotTexture = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.35, 'rgba(255,255,255,0.8)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+// deterministic PRNG for layouts
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---------------------------------------------------------------- state
+let model = null;           // loaded JSON
+let root = null;            // THREE.Group with everything of the current model
+let update = () => {};      // per-frame updater of the current mode
+const clock = new THREE.Clock();
+let hoverInfo = null;       // (instanceId) -> string
+
+function clearScene() {
+  if (root) {
+    root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+      if (o.element) o.element.remove();
+    });
+    scene.remove(root);
+  }
+  root = new THREE.Group();
+  scene.add(root);
+  hoverInfo = null;
+}
+
+// ---------------------------------------------------------------- layout helpers
+// Positions of neurons in the YZ plane for one layer, plus the layer depth (x extent).
+function layoutLayer(layer, count) {
+  const pos = [];
+  const shape = layer.shape;
+  const all = !layer.shown;
+  if (all && shape.length === 3) {               // C x H x W feature maps, stacked along x
+    const [C, H, W] = shape;
+    const s = Math.min(0.42, 9 / Math.max(H, W));
+    const gapX = Math.max(0.35, Math.min(0.9, 6 / C));
+    for (let c = 0; c < C; c++)
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++)
+          pos.push([c * gapX, (H / 2 - y) * s, (x - W / 2) * s]);
+    return { pos, depth: (C - 1) * gapX, radius: s * 0.36 };
+  }
+  if (all && shape.length === 2) {               // T x F sequence grid
+    const [T, F] = shape;
+    const s = Math.min(0.5, 9 / Math.max(T, F));
+    for (let t = 0; t < T; t++)
+      for (let f = 0; f < F; f++) pos.push([0, (F / 2 - f) * s, (t - T / 2) * s]);
+    return { pos, depth: 0, radius: s * 0.33 };
+  }
+  const side = Math.ceil(Math.sqrt(count));      // flat: near-square grid
+  const s = Math.min(0.7, 10 / side);
+  const rows = Math.ceil(count / side);
+  for (let i = 0; i < count; i++) {
+    const r = Math.floor(i / side), c = i % side;
+    pos.push([0, (rows / 2 - r - 0.5) * s, (c - side / 2 + 0.5) * s]);
+  }
+  return { pos, depth: 0, radius: Math.min(0.26, s * 0.34) };
+}
+
+function makeLabel(text, sub) {
+  const div = document.createElement('div');
+  div.className = 'lbl';
+  div.innerHTML = `${text}${sub ? `<br><span style="opacity:.7">${sub}</span>` : ''}`;
+  return new CSS2DObject(div);
+}
+
+// ---------------------------------------------------------------- network mode
+function buildNetwork(m) {
+  clearScene();
+  const layers = m.layers;
+  const L = layers.length;
+  const counts = m.snapshots.length ? m.snapshots[0].samples[0].act.map((a) => a.length)
+                                    : layers.map((l) => (l.shown ? l.shown.length : l.shape.reduce((a, b) => a * b, 1)));
+  // place layers along x
+  const lay = [];
+  let x = 0;
+  for (let i = 0; i < L; i++) {
+    const g = layoutLayer(layers[i], counts[i]);
+    g.x0 = x;
+    lay.push(g);
+    x += g.depth + 6;
+  }
+  const totalX = x - 6;
+  const offsets = [];
+  let total = 0;
+  for (let i = 0; i < L; i++) { offsets.push(total); total += counts[i]; }
+
+  // neurons: one instanced mesh for all layers
+  const geo = new THREE.IcosahedronGeometry(1, 1);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const mesh = new THREE.InstancedMesh(geo, mat, total);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const base = new Float32Array(total * 3), radius = new Float32Array(total), layerOf = new Uint16Array(total);
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < L; i++)
+    lay[i].pos.forEach((p, k) => {
+      const id = offsets[i] + k;
+      base[3 * id] = p[0] + lay[i].x0 - totalX / 2;
+      base[3 * id + 1] = p[1];
+      base[3 * id + 2] = p[2];
+      radius[id] = lay[i].radius;
+      layerOf[id] = i;
+      dummy.position.set(base[3 * id], base[3 * id + 1], base[3 * id + 2]);
+      dummy.scale.setScalar(radius[id]);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(id, dummy.matrix);
+      mesh.setColorAt(id, DARK);
+    });
+  root.add(mesh);
+
+  // labels
+  const labels = [];
+  for (let i = 0; i < L; i++) {
+    const shape = layers[i].shape.join('×');
+    const lbl = makeLabel(layers[i].name.split('(')[0], shape);
+    const ys = lay[i].pos.map((p) => p[1]);
+    lbl.position.set(lay[i].x0 + lay[i].depth / 2 - totalX / 2, Math.max(...ys) + 1.2, 0);
+    root.add(lbl);
+    labels.push(lbl);
+  }
+
+  // connections: allocate for the largest edge set over all snapshots
+  const maxEdges = [];
+  for (let i = 0; i < L - 1; i++)
+    maxEdges.push(Math.max(0, ...m.snapshots.map((s) => (s.edges[i] || []).length / 3)));
+  const nEdges = maxEdges.reduce((a, b) => a + b, 0);
+  const edgePos = new Float32Array(nEdges * 6), edgeCol = new Float32Array(nEdges * 6);
+  const edgeGeo = new THREE.BufferGeometry();
+  edgeGeo.setAttribute('position', new THREE.BufferAttribute(edgePos, 3).setUsage(THREE.DynamicDrawUsage));
+  edgeGeo.setAttribute('color', new THREE.BufferAttribute(edgeCol, 3).setUsage(THREE.DynamicDrawUsage));
+  const edgeMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  const lines = new THREE.LineSegments(edgeGeo, edgeMat);
+  root.add(lines);
+  // pulses travelling along connections
+  const pulsePos = new Float32Array(nEdges * 3), pulseCol = new Float32Array(nEdges * 3);
+  const pulseGeo = new THREE.BufferGeometry();
+  pulseGeo.setAttribute('position', new THREE.BufferAttribute(pulsePos, 3).setUsage(THREE.DynamicDrawUsage));
+  pulseGeo.setAttribute('color', new THREE.BufferAttribute(pulseCol, 3).setUsage(THREE.DynamicDrawUsage));
+  const pulseMat = new THREE.PointsMaterial({ size: 0.45, map: dotTexture, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+  const pulses = new THREE.Points(pulseGeo, pulseMat);
+  root.add(pulses);
+
+  // camera framing
+  const span = Math.max(totalX, 12);
+  camera.position.set(-span * 0.25, span * 0.35, span * 0.95);
+  controls.target.set(0, 0, 0);
+  scene.fog.density = 0.6 / span;
+
+  // per-snapshot derived data
+  let snapIdx = 0, sampleIdx = 0;
+  let edges = [];          // {src, dst, w, layer}
+  let actNorm = [];        // normalised activations per layer of the current sample
+  let edgeStrength = new Float32Array(nEdges);
+  let edgeCount = 0;
+
+  function prepare() {
+    const snap = m.snapshots[snapIdx];
+    if (!snap) return;
+    const sample = snap.samples[Math.min(sampleIdx, snap.samples.length - 1)];
+    // normalise each layer by its max |a| over all samples of the snapshot (stable across samples)
+    actNorm = sample.act.map((a, li) => {
+      let mx = 1e-9;
+      for (const s of snap.samples) for (const v of s.act[li]) mx = Math.max(mx, Math.abs(v));
+      return a.map((v) => v / mx);
+    });
+    edges = [];
+    for (let li = 0; li < L - 1; li++) {
+      const e = snap.edges[li] || [];
+      let wmax = 1e-9;
+      for (let k = 2; k < e.length; k += 3) wmax = Math.max(wmax, Math.abs(e[k]));
+      for (let k = 0; k < e.length; k += 3)
+        edges.push({ src: offsets[li] + e[k], dst: offsets[li + 1] + e[k + 1], w: e[k + 2] / wmax, layer: li, srcLocal: e[k] });
+    }
+    edgeCount = edges.length;
+    edges.forEach((ed, k) => {
+      for (let d = 0; d < 3; d++) {
+        edgePos[6 * k + d] = base[3 * ed.src + d];
+        edgePos[6 * k + 3 + d] = base[3 * ed.dst + d];
+      }
+      // signal carried = |w * a_src|
+      edgeStrength[k] = Math.min(1, Math.abs(ed.w * (actNorm[ed.layer][ed.srcLocal] ?? 0)) * 1.6);
+    });
+    edgeGeo.setDrawRange(0, edgeCount * 2);
+    pulseGeo.setDrawRange(0, edgeCount);
+    edgeGeo.attributes.position.needsUpdate = true;
+    showStats(snap, sample);
+  }
+
+  // flow animation: t runs 0 .. L+1.5, layer i lights up at t = i
+  let t = 0, playing = true;
+  update = (dt) => {
+    if (!m.snapshots.length) return;
+    if (playing) t += dt * flowSpeed();
+    const cycle = L + 1.6;
+    if (t > cycle) t -= cycle;
+    const alpha = Number($('edgeAlpha').value);
+    // neurons
+    for (let id = 0; id < total; id++) {
+      const li = layerOf[id];
+      const a = actNorm[li] ? actNorm[li][id - offsets[li]] ?? 0 : 0;
+      const arrive = THREE.MathUtils.clamp((t - li) * 2.5, 0, 1);          // wave front
+      const flash = Math.exp(-Math.max(0, t - li) * 3) * (arrive > 0 ? 1 : 0); // brief overshoot on arrival
+      const v = a * arrive * (1 + 0.6 * flash);
+      activationColor(THREE.MathUtils.clamp(v, -1, 1.2), tmpColor);
+      mesh.setColorAt(id, tmpColor);
+      const sc = radius[id] * (1 + 0.55 * Math.min(1, Math.abs(v)));
+      dummy.position.set(base[3 * id], base[3 * id + 1], base[3 * id + 2]);
+      dummy.scale.setScalar(sc);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(id, dummy.matrix);
+    }
+    mesh.instanceColor.needsUpdate = true;
+    mesh.instanceMatrix.needsUpdate = true;
+    // connections + pulses
+    const showP = $('particles').checked;
+    for (let k = 0; k < edgeCount; k++) {
+      const ed = edges[k];
+      const phase = t - ed.layer;                 // 0..1 while the signal crosses
+      const active = phase > 0 && phase < 1 ? 1 : 0;
+      const s = edgeStrength[k];
+      const dim = Math.min(1, 120 / Math.max(1, edgeCount / Math.max(1, L - 1)));  // fewer edges -> brighter
+      const I = alpha * dim * (0.04 + 0.18 * Math.abs(ed.w) + active * s * 0.55);
+      const c = ed.w >= 0 ? WARM : COLD;
+      for (let v = 0; v < 2; v++) {
+        edgeCol[6 * k + 3 * v] = c.r * I; edgeCol[6 * k + 3 * v + 1] = c.g * I; edgeCol[6 * k + 3 * v + 2] = c.b * I;
+      }
+      const f = THREE.MathUtils.clamp(phase, 0, 1);
+      for (let d = 0; d < 3; d++) pulsePos[3 * k + d] = base[3 * ed.src + d] + (base[3 * ed.dst + d] - base[3 * ed.src + d]) * f;
+      const P = showP ? active * s * 1.1 : 0;
+      pulseCol[3 * k] = (ed.w >= 0 ? 1.0 : 0.35) * P; pulseCol[3 * k + 1] = (ed.w >= 0 ? 0.75 : 0.85) * P; pulseCol[3 * k + 2] = (ed.w >= 0 ? 0.35 : 1.0) * P;
+    }
+    edgeGeo.attributes.color.needsUpdate = true;
+    pulseGeo.attributes.position.needsUpdate = true;
+    pulseGeo.attributes.color.needsUpdate = true;
+    labels.forEach((l) => (l.visible = $('labels').checked));
+  };
+
+  hoverInfo = (id) => {
+    const li = layerOf[id], k = id - offsets[li];
+    const snap = m.snapshots[snapIdx];
+    const raw = snap ? snap.samples[Math.min(sampleIdx, snap.samples.length - 1)].act[li][k] : undefined;
+    const idx = layers[li].shown ? layers[li].shown[k] : k;
+    return `<b>${layers[li].name}</b><br>neuron ${idx}${raw !== undefined ? ` · activation ${raw.toFixed(4)}` : ''}`;
+  };
+  pickTarget = mesh;
+
+  // UI wiring
+  $('netControls').style.display = '';
+  $('spkControls').style.display = 'none';
+  $('raster').style.display = 'none';
+  const snapEl = $('snap');
+  snapEl.max = Math.max(0, m.snapshots.length - 1);
+  snapEl.value = snapEl.max;
+  snapIdx = Number(snapEl.value);
+  snapEl.oninput = () => { snapIdx = Number(snapEl.value); prepare(); drawLoss(m, snapIdx); };
+  const sel = $('sample');
+  sel.innerHTML = '';
+  const ns = m.snapshots.length ? m.snapshots[0].samples.length : 0;
+  for (let i = 0; i < ns; i++) sel.add(new Option(`#${i + 1}`, i));
+  sel.onchange = () => { sampleIdx = Number(sel.value); t = 0; prepare(); };
+  $('playFlow').onclick = () => { playing = !playing; $('playFlow').textContent = playing ? '❚❚' : '▶'; };
+  let snapTimer = null;
+  $('playSnaps').onclick = () => {
+    if (snapTimer) { clearInterval(snapTimer); snapTimer = null; $('playSnaps').textContent = '▶ Play training'; return; }
+    if (snapIdx >= m.snapshots.length - 1) { snapIdx = 0; }
+    $('playSnaps').textContent = '❚❚ Pause';
+    snapTimer = setInterval(() => {
+      snapEl.value = snapIdx; prepare(); drawLoss(m, snapIdx);
+      if (++snapIdx >= m.snapshots.length) { clearInterval(snapTimer); snapTimer = null; snapIdx = m.snapshots.length - 1; $('playSnaps').textContent = '▶ Play training'; }
+    }, 450);
+  };
+  cleanup = () => snapTimer && clearInterval(snapTimer);
+  prepare();
+  drawLoss(m, snapIdx);
+  $('subtitle').textContent = `${L} layers · ${total.toLocaleString()} neurons shown · ${m.snapshots.length} snapshots`;
+}
+
+const flowSpeed = () => Number($('flowSpeed').value) * 1.2;
+
+function showStats(snap, sample) {
+  const f = (v, d = 4) => (v === null || v === undefined ? '–' : Number(v).toFixed(d));
+  $('snapVal').textContent = snap.label;
+  $('stats').innerHTML = `<div><span>loss</span><b>${f(snap.loss)}</b></div>` +
+    (snap.accuracy !== null ? `<div><span>accuracy</span><b>${(snap.accuracy * 100).toFixed(1)}%</b></div>` : '');
+  const out = sample.act[sample.act.length - 1];
+  const tgt = sample.target;
+  const tIdx = tgt && tgt.length > 1 ? tgt.indexOf(Math.max(...tgt)) : -1;
+  const mx = Math.max(1e-9, ...out.map(Math.abs));
+  $('bars').innerHTML = out.slice(0, 16).map((v, i) =>
+    `<div class="bar${i === tIdx ? ' t' : ''}"><span>${i}</span><i style="width:${Math.max(2, (Math.abs(v) / mx) * 100)}%"></i><span>${v.toFixed(3)}</span></div>`).join('') +
+    (tgt && tgt.length === 1 ? `<div style="color:var(--muted);font-size:12px">target ${tgt[0].toFixed(3)}</div>` :
+     tIdx >= 0 ? `<div style="color:var(--muted);font-size:12px">highlighted = target class</div>` : '');
+}
+
+function drawLoss(m, idx) {
+  const c = $('lossChart');
+  const w = (c.width = c.clientWidth * devicePixelRatio), h = (c.height = c.clientHeight * devicePixelRatio);
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  const ls = m.snapshots.map((s) => s.loss).filter((v) => v !== null);
+  if (ls.length < 2) return;
+  const lo = Math.min(...ls), hi = Math.max(...ls);
+  const X = (i) => 4 + (i / (m.snapshots.length - 1)) * (w - 8);
+  const Y = (v) => h - 6 - ((v - lo) / (hi - lo || 1)) * (h - 14);
+  g.strokeStyle = '#ffb547'; g.lineWidth = 1.5 * devicePixelRatio; g.beginPath();
+  m.snapshots.forEach((s, i) => { if (s.loss === null) return; i ? g.lineTo(X(i), Y(s.loss)) : g.moveTo(X(i), Y(s.loss)); });
+  g.stroke();
+  g.fillStyle = '#fff'; g.beginPath();
+  if (m.snapshots[idx].loss !== null) g.arc(X(idx), Y(m.snapshots[idx].loss), 3 * devicePixelRatio, 0, 7);
+  g.fill();
+  g.fillStyle = '#8b97ad'; g.font = `${10 * devicePixelRatio}px system-ui`; g.fillText('loss', 6, 12 * devicePixelRatio);
+}
+
+// ---------------------------------------------------------------- spiking mode
+function buildSpiking(m) {
+  clearScene();
+  const P = m.populations.length;
+  const N = m.pop.length;
+  const counts = new Array(P).fill(0);
+  m.pop.forEach((p) => counts[p]++);
+  // each population is a ball of neurons; balls arranged on a circle
+  const ringR = P > 1 ? 7 + Math.sqrt(N) * 0.12 : 0;
+  const centers = m.populations.map((_, p) => {
+    const a = (p / P) * Math.PI * 2;
+    return new THREE.Vector3(Math.cos(a) * ringR, 0, Math.sin(a) * ringR);
+  });
+  const base = new Float32Array(N * 3);
+  const seen = new Array(P).fill(0);
+  const rnd = mulberry32(12345);
+  for (let i = 0; i < N; i++) {
+    const p = m.pop[i], n = counts[p];
+    seen[p]++;
+    const R = 1.2 + Math.cbrt(n) * 0.42;
+    const r = R * Math.cbrt(rnd());                      // uniform in the ball's volume
+    const y = 1 - 2 * rnd(), th = 2 * Math.PI * rnd();  // uniform direction
+    const rad = Math.sqrt(1 - y * y);
+    base[3 * i] = centers[p].x + Math.cos(th) * rad * r;
+    base[3 * i + 1] = centers[p].y + y * r;
+    base[3 * i + 2] = centers[p].z + Math.sin(th) * rad * r;
+  }
+  const geo = new THREE.IcosahedronGeometry(1, 1);
+  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff }), N);
+  const dummy = new THREE.Object3D();
+  const rad = Math.max(0.05, Math.min(0.16, 2.4 / Math.cbrt(N)));
+  const popCol = m.populations.map((_, p) => new THREE.Color(POP_COLORS[p % POP_COLORS.length]));
+  for (let i = 0; i < N; i++) {
+    dummy.position.set(base[3 * i], base[3 * i + 1], base[3 * i + 2]);
+    dummy.scale.setScalar(rad);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    mesh.setColorAt(i, tmpColor.copy(popCol[m.pop[i]]).multiplyScalar(0.12));
+  }
+  root.add(mesh);
+  m.populations.forEach((p, i) => {
+    const lbl = makeLabel(p.name, `${p.model} · ${p.size.toLocaleString()} neurons`);
+    lbl.position.copy(centers[i]).add(new THREE.Vector3(0, 1.6 + Math.cbrt(counts[i]) * 0.45, 0));
+    root.add(lbl);
+  });
+
+  // synapses
+  const E = m.weights.length;
+  const ePos = new Float32Array(E * 6), eCol = new Float32Array(E * 6);
+  for (let k = 0; k < E; k++)
+    for (let d = 0; d < 3; d++) { ePos[6 * k + d] = base[3 * m.edges[2 * k] + d]; ePos[6 * k + 3 + d] = base[3 * m.edges[2 * k + 1] + d]; }
+  const eGeo = new THREE.BufferGeometry();
+  eGeo.setAttribute('position', new THREE.BufferAttribute(ePos, 3));
+  eGeo.setAttribute('color', new THREE.BufferAttribute(eCol, 3).setUsage(THREE.DynamicDrawUsage));
+  root.add(new THREE.LineSegments(eGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })));
+  const outEdges = Array.from({ length: N }, () => []);
+  for (let k = 0; k < E; k++) outEdges[m.edges[2 * k]].push(k);
+  let wmax = 1e-9;
+  for (const w of m.weights) wmax = Math.max(wmax, Math.abs(w));
+
+  const heat = new Float32Array(N), eHeat = new Float32Array(E);
+  const span = ringR * 2 + 10;
+  camera.position.set(span * 0.2, span * 0.55, span * 1.0);
+  controls.target.set(0, 0, 0);
+  scene.fog.density = 0.5 / span;
+
+  // population rates per frame for the stats panel
+  const frames = m.frames;
+  let frame = 0, acc = 0, playing = true;
+  const frameEl = $('frame');
+  frameEl.max = Math.max(0, frames.length - 1);
+  frameEl.value = 0;
+  frameEl.oninput = () => { frame = Number(frameEl.value); heat.fill(0); eHeat.fill(0); };
+  $('playSpk').onclick = () => { playing = !playing; $('playSpk').textContent = playing ? '❚❚ Pause' : '▶ Play'; };
+  $('netControls').style.display = 'none';
+  $('spkControls').style.display = '';
+  $('raster').style.display = 'block';
+  resize();
+
+  function stepFrame() {
+    for (const i of frames[frame]) {
+      heat[i] = 1;
+      for (const k of outEdges[i]) eHeat[k] = 1;
+    }
+    frameEl.value = frame;
+    $('frameVal').textContent = `${(frame * m.dt).toFixed(1)} ms`;
+    frame = (frame + 1) % frames.length;
+    if (frame === 0) { heat.fill(0); eHeat.fill(0); }
+  }
+
+  // rolling rate (spikes in the last 50 frames) per population
+  function rates() {
+    const win = Math.min(Math.round(100 / m.dt), frames.length);
+    const c = new Array(P).fill(0);
+    for (let f = 0; f < win; f++) {
+      const idx = (frame - 1 - f + frames.length) % frames.length;
+      for (const i of frames[idx]) c[m.pop[i]]++;
+    }
+    return c.map((v, p) => (v / Math.max(1, counts[p])) / (win * m.dt * 1e-3));
+  }
+
+  update = (dt) => {
+    if (!frames.length) return;
+    if (playing) {
+      acc += dt * Number($('spkSpeed').value) * 10;
+      let steps = Math.floor(acc);
+      acc -= steps;
+      steps = Math.min(steps, 40);
+      for (let s = 0; s < steps; s++) stepFrame();
+      const decay = Math.pow(0.82, steps);
+      for (let i = 0; i < N; i++) heat[i] *= decay;
+      for (let k = 0; k < E; k++) eHeat[k] *= Math.pow(0.7, steps);
+    }
+    for (let i = 0; i < N; i++) {
+      const h = heat[i];
+      tmpColor.copy(popCol[m.pop[i]]).multiplyScalar(0.12 + 2.2 * h);
+      if (h > 0.6) tmpColor.lerp(HOT, (h - 0.6) * 1.5);
+      mesh.setColorAt(i, tmpColor);
+      dummy.position.set(base[3 * i], base[3 * i + 1], base[3 * i + 2]);
+      dummy.scale.setScalar(rad * (1 + 1.3 * h));
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceColor.needsUpdate = true;
+    mesh.instanceMatrix.needsUpdate = true;
+    const alpha = Number($('synAlpha').value);
+    for (let k = 0; k < E; k++) {
+      const w = m.weights[k] / wmax;
+      const c = w >= 0 ? WARM : COLD;
+      const I = alpha * (0.015 + 0.04 * Math.abs(w) + 0.45 * eHeat[k]);
+      for (let v = 0; v < 2; v++) { eCol[6 * k + 3 * v] = c.r * I; eCol[6 * k + 3 * v + 1] = c.g * I; eCol[6 * k + 3 * v + 2] = c.b * I; }
+    }
+    eGeo.attributes.color.needsUpdate = true;
+    drawRaster(m, frame, counts);
+    const r = rates();
+    $('pops').innerHTML = m.populations.map((p, i) =>
+      `<div class="row"><span style="color:#${popCol[i].getHexString()}">●</span><span style="flex:1">${p.name}</span><span class="val">${r[i].toFixed(1)} Hz</span></div>`).join('');
+  };
+  hoverInfo = (id) => `<b>${m.populations[m.pop[id]].name}</b> (${m.populations[m.pop[id]].model})<br>neuron ${id}`;
+  pickTarget = mesh;
+  $('subtitle').textContent = `${P} populations · ${N.toLocaleString()} neurons shown · ${E.toLocaleString()} synapses · ${(frames.length * m.dt).toFixed(0)} ms`;
+}
+
+// raster plot: last 400 frames, one row per displayed neuron (subsampled)
+function drawRaster(m, frame, counts) {
+  const c = $('raster');
+  const g = c.getContext('2d');
+  const w = c.width, h = c.height;
+  g.fillStyle = 'rgba(8,11,18,1)';
+  g.fillRect(0, 0, w, h);
+  const N = m.pop.length, win = Math.min(400, m.frames.length);
+  const rowH = h / N;
+  for (let f = 0; f < win; f++) {
+    const idx = frame - win + f;
+    if (idx < 0) continue;                         // nothing recorded before t = 0
+    const x = (f / win) * w;
+    for (const i of m.frames[idx]) {
+      g.fillStyle = '#' + new THREE.Color(POP_COLORS[m.pop[i] % POP_COLORS.length]).getHexString();
+      g.fillRect(x, i * rowH, Math.max(1, w / win), Math.max(1, rowH));
+    }
+  }
+  g.fillStyle = '#8b97ad';
+  g.font = `${10 * devicePixelRatio}px system-ui`;
+  g.fillText(`spike raster · last ${(win * m.dt).toFixed(0)} ms`, 8, 14 * devicePixelRatio);
+}
+
+// ---------------------------------------------------------------- loading
+let pickTarget = null;
+let cleanup = () => {};
+function load(json, name) {
+  if (json.format !== 'nn-viz') throw new Error('not an nn-viz file');
+  cleanup();
+  cleanup = () => {};
+  model = json;
+  $('empty').style.display = 'none';
+  controls.autoRotate = true;
+  if (json.kind === 'spiking') buildSpiking(json);
+  else buildNetwork(json);
+  document.title = `${name} · nn 3D Viewer`;
+}
+async function loadUrl(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status);
+    load(await r.json(), url.split('/').pop());
+  } catch (e) {
+    $('empty').style.display = 'flex';
+    $('empty').innerHTML = `Could not load <code>${url}</code> (${e.message}).<br>Serve the folder with <code>python3 -m http.server</code> or use “Open file…”.`;
+  }
+}
+function loadFile(file) {
+  file.text().then((t) => {
+    try { load(JSON.parse(t), file.name); } catch (e) { alert(`Could not read ${file.name}: ${e.message}`); }
+  });
+}
+$('file').onchange = (e) => e.target.files[0] && loadFile(e.target.files[0]);
+$('demo').onchange = (e) => e.target.value && loadUrl(e.target.value);
+addEventListener('dragover', (e) => { e.preventDefault(); $('drop').style.display = 'flex'; });
+addEventListener('dragleave', (e) => { if (e.relatedTarget === null) $('drop').style.display = 'none'; });
+addEventListener('drop', (e) => {
+  e.preventDefault();
+  $('drop').style.display = 'none';
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+// hover picking
+const ray = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let mouseClient = null;
+renderer.domElement.addEventListener('pointermove', (e) => {
+  mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  mouseClient = [e.clientX, e.clientY];
+});
+renderer.domElement.addEventListener('pointerleave', () => { mouseClient = null; $('hover').style.display = 'none'; });
+let pickCounter = 0;
+function pick() {
+  const tip = $('hover');
+  if (!pickTarget || !hoverInfo || !mouseClient) return;
+  if (++pickCounter % 3) return;   // raycast every 3rd frame
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(pickTarget, false)[0];
+  if (hit && hit.instanceId !== undefined) {
+    tip.innerHTML = hoverInfo(hit.instanceId);
+    tip.style.display = 'block';
+    tip.style.left = `${mouseClient[0] + 14}px`;
+    tip.style.top = `${mouseClient[1] + 12}px`;
+  } else tip.style.display = 'none';
+}
+
+// ---------------------------------------------------------------- main loop
+resize();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(0.05, clock.getDelta());
+  update(dt);
+  controls.update();
+  pick();
+  composer.render();
+  labelRenderer.render(scene, camera);
+});
+
+// embedded data (window.NN_VIZ_DATA) or ?src=<url>
+const src = new URLSearchParams(location.search).get('src');
+if (window.NN_VIZ_DATA) load(window.NN_VIZ_DATA, 'embedded');
+else if (src) loadUrl(src);
+</script>
+</body>
+</html>

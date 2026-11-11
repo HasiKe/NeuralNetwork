@@ -89,6 +89,8 @@ public:
     std::size_t output_dim() const;
     std::size_t size() const { return m_layers.size(); }
     Layer& layer(std::size_t i) { return *m_layers.at(i); }
+    /// Output of layer i from the most recent forward() call.
+    const Matrix& layer_output(std::size_t i) const { return m_acts.at(i); }
     std::size_t parameter_count();
     std::string summary();
     Optimizer* optimizer() { return m_opt.get(); }

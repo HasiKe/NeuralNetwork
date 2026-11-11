@@ -100,6 +100,46 @@ CMake-Optionen:
 | `NN_BUILD_EXAMPLES` / `NN_BUILD_TESTS` / `NN_BUILD_BENCHMARKS` | ON (Top-Level) | Extras |
 | `BUILD_SHARED_LIBS` | OFF | `libnn.so` statt `libnn.a` |
 
+### 3D-Visualisierung
+
+`viz/viewer.html` zeigt ein Modell in 3D im Browser: Jedes Neuron ist eine
+Kugel, die stärksten Verbindungen sind Linien, und ein aufgezeichneter
+Vorwärtsdurchlauf läuft als Welle durch die Schichten. Neuronen leuchten
+orange bei positiver und blau bei negativer Aktivierung; Impulse wandern
+entlang der Verbindungen, je nachdem wie viel Signal sie tragen. Mit einem
+Schieberegler blättert man durch die Trainings-Snapshots und sieht, wie sich
+das Netz beim Lernen verändert. Spiking-Netze erscheinen als Populationen,
+deren Neuronen beim Feuern aufblitzen, darunter ein Spike-Raster.
+
+Aufzeichnen mit `nn::viz` (Teil der Bibliothek, keine zusätzlichen Abhängigkeiten):
+
+```cpp
+#include <nn/viz.hpp>
+
+nn::viz::NetworkRecorder rec(net);            // Dense-, Conv2D-, LSTM/GRU-, ... Netze
+opts.on_epoch_end = [&](size_t e, float loss, float) {
+    rec.snapshot(x, &y, "Epoche " + std::to_string(e + 1), loss);
+    return true;
+};
+net.fit(x, y, opts);
+rec.save("model.viz.json");
+
+nn::viz::SpikeRecorder spikes(spiking_net);   // Spiking-Netze
+for (int s = 0; s < 2000; ++s) { spiking_net.step(); spikes.record_step(); }
+spikes.save("spiking.viz.json");
+```
+
+`viz/viewer.html` öffnen und die Datei über „Open file…“ oder per Drag & Drop
+laden. Die mitgelieferten Demos (MLP, CNN, LSTM, Spiking-Netz):
+
+```bash
+./build/example_viz_demo viz              # schreibt viz/*.viz.json
+cd viz && python3 -m http.server          # http://localhost:8000/viewer.html
+```
+
+Große Schichten werden für die Anzeige ausgedünnt (`RecordOptions`). Der
+Viewer lädt three.js von einem CDN und braucht daher eine Internetverbindung.
+
 ### GPU-Beschleunigung
 
 GPU-Backends sind optionale CMake-Flags zusätzlich zu `NN_BUILD_LIBRARY`.
