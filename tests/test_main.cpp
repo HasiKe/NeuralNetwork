@@ -462,6 +462,206 @@ TEST(lr_schedules) {
     CHECK(std::fabs(net.optimizer()->learning_rate() - 0.025f) < 1e-7);
 }
 
+// ------------------------------------------------------------------ automatic learning rate
+
+// y = sin(3a) + 0.5 b^2 on 2 inputs
+void auto_lr_data(nn::Matrix& x, nn::Matrix& y, std::size_t n = 400) {
+    nn::Rng rng(77);
+    x = random_matrix(n, 2, rng);
+    y = nn::Matrix(n, 1);
+    for (std::size_t i = 0; i < n; ++i) y(i, 0) = std::sin(3 * x(i, 0)) + 0.5f * x(i, 1) * x(i, 1);
+}
+
+nn::Network auto_lr_net(std::unique_ptr<nn::Optimizer> opt, std::uint64_t seed = 5) {
+    nn::Network net(2, seed);
+    net.add<nn::Dense>(16, nn::Activation::tanh());
+    net.add<nn::Dense>(1);
+    net.compile(nn::Loss::MeanSquaredError, std::move(opt));
+    return net;
+}
+
+std::string model_bytes(const nn::Network& net) {
+    std::ostringstream s;
+    net.save(s);
+    return s.str();
+}
+
+bool finite_parameters(nn::Network& net, const nn::Matrix& x) {
+    const nn::Matrix p = net.predict(x);
+    for (std::size_t i = 0; i < p.size(); ++i)
+        if (!std::isfinite(p[i])) return false;
+    return true;
+}
+
+TEST(auto_lr_is_opt_in) {
+    nn::FitOptions o;
+    CHECK(!o.auto_lr.enabled);
+    nn::Matrix x, y;
+    auto_lr_data(x, y, 64);
+    auto net = auto_lr_net(std::make_unique<nn::SGD>(0.05f));
+    o.epochs = 3;
+    o.verbose = 0;
+    const auto h = net.fit(x, y, o);
+    CHECK(!h.auto_lr.used);
+    CHECK(h.loss.size() == 3);
+    CHECK(net.optimizer()->learning_rate() == 0.05f);
+}
+
+// The range test must leave weights and optimizer state (momentum, step count) untouched:
+// a twin that never ran it has to stay bit identical.
+TEST(auto_lr_range_test_has_no_side_effects) {
+    nn::Matrix x, y;
+    auto_lr_data(x, y);
+    for (int which = 0; which < 4; ++which) {
+        auto make = [&]() -> std::unique_ptr<nn::Optimizer> {
+            if (which == 0) return std::make_unique<nn::Adam>(0.01f);
+            if (which == 1) return std::make_unique<nn::SGD>(0.01f, 0.9f);
+            if (which == 2) return std::make_unique<nn::RMSProp>(0.01f);
+            return std::make_unique<nn::Adagrad>(0.01f);
+        };
+        auto a = auto_lr_net(make()), b = auto_lr_net(make());
+        for (int i = 0; i < 5; ++i) {
+            a.train_batch(x, y);
+            b.train_batch(x, y);
+        }
+        const std::string before = model_bytes(a);
+        const nn::Optimizer* opt = a.optimizer();
+        const nn::LRFindResult r = a.find_learning_rate(x, y, 32);
+        CHECK(model_bytes(a) == before);
+        CHECK(a.optimizer() == opt && a.optimizer()->learning_rate() == 0.01f);
+        CHECK(r.lr > 0 && r.lr <= r.min_loss_lr && r.min_loss_lr <= 10.0f);
+        CHECK(r.lrs.size() == r.losses.size() && r.lrs.size() > 10);
+        for (int i = 0; i < 5; ++i) {
+            a.train_batch(x, y);
+            b.train_batch(x, y);
+        }
+        CHECK_MSG(model_bytes(a) == model_bytes(b), "optimizer %d state changed by the range test", which);
+    }
+}
+
+TEST(auto_lr_trains_without_a_learning_rate) {
+    nn::Matrix x, y;
+    auto_lr_data(x, y);
+    for (int sgd = 0; sgd < 2; ++sgd) {
+        // an absurd rate in the optimizer must not matter
+        std::unique_ptr<nn::Optimizer> o;
+        if (sgd)
+            o = std::make_unique<nn::SGD>(1000.0f, 0.9f);
+        else
+            o = std::make_unique<nn::Adam>(1000.0f);
+        auto net = auto_lr_net(std::move(o));
+        const float before = net.evaluate_loss(x, y);
+        nn::FitOptions f;
+        f.epochs = 120;
+        f.verbose = 0;
+        f.auto_lr = nn::AutoLR::on();
+        const auto h = net.fit(x, y, f);
+        const float after = net.evaluate_loss(x, y);
+        CHECK(h.auto_lr.used);
+        CHECK(h.auto_lr.validation_rows == 60);  // 15 % held out automatically
+        CHECK(h.auto_lr.start_lr > 1e-4f && h.auto_lr.start_lr < 5.0f);
+        CHECK(h.auto_lr.start_lr == h.auto_lr.range.lr);
+        CHECK(h.auto_lr.warmup_steps > 0 && h.auto_lr.best_epoch > 0);
+        CHECK(h.learning_rate.front() < h.auto_lr.start_lr || h.auto_lr.warmup_steps <= 11);
+        CHECK_MSG(after < 0.02f && after < before * 0.05f, "%s: loss %.4f -> %.5f", sgd ? "sgd" : "adam", before, after);
+    }
+}
+
+TEST(auto_lr_keeps_best_weights_and_stops_early) {
+    nn::Matrix x, y, xv, yv;
+    auto_lr_data(x, y, 60);
+    auto_lr_data(xv, yv, 200);
+    nn::Rng noise(3);
+    for (std::size_t i = 0; i < y.size(); ++i) y[i] += 0.5f * noise.normal();  // invites overfitting
+    auto net = auto_lr_net(std::make_unique<nn::Adam>());
+    nn::FitOptions f;
+    f.epochs = 2000;
+    f.verbose = 0;
+    f.auto_lr = nn::AutoLR::on();
+    f.auto_lr.patience = 5;
+    const auto h = net.fit(x, y, xv, yv, f);
+    CHECK(h.auto_lr.stopped_early && h.loss.size() < 2000);
+    CHECK(h.auto_lr.reductions > 0);
+    CHECK(h.auto_lr.validation_rows == 200);
+    float lowest = h.val_loss.front();
+    for (float v : h.val_loss) lowest = std::min(lowest, v);
+    CHECK(std::fabs(h.auto_lr.best_loss - lowest) < 1e-6f);
+    CHECK(std::fabs(net.evaluate_loss(xv, yv) - lowest) < 1e-6f);
+}
+
+TEST(auto_lr_recovers_from_divergence) {
+    nn::Matrix x, y;
+    auto_lr_data(x, y);
+    auto net = auto_lr_net(std::make_unique<nn::SGD>(0.1f, 0.9f));
+    const float before = net.evaluate_loss(x, y);
+    nn::FitOptions f;
+    f.epochs = 150;
+    f.verbose = 0;
+    f.auto_lr = nn::AutoLR::on();
+    f.auto_lr.initial_lr = 100.0f;  // certainly too high, no range test
+    f.auto_lr.max_rollbacks = 12;
+    const auto h = net.fit(x, y, f);
+    CHECK(h.auto_lr.range.lrs.empty());
+    CHECK(h.auto_lr.rollbacks > 0);
+    CHECK(h.auto_lr.final_lr < 5.0f);
+    CHECK(finite_parameters(net, x));
+    const float after = net.evaluate_loss(x, y);
+    CHECK_MSG(after < before * 0.2f, "loss %.4f -> %.4f", before, after);
+}
+
+TEST(auto_lr_survives_nan_data) {
+    nn::Matrix x, y;
+    auto_lr_data(x, y, 100);
+    nn::Matrix bad = y;
+    for (std::size_t i = 0; i < bad.size(); ++i) bad[i] = std::nanf("");
+    auto net = auto_lr_net(std::make_unique<nn::Adam>());
+    const std::string before = model_bytes(net);
+    nn::FitOptions f;
+    f.epochs = 50;
+    f.verbose = 0;
+    f.auto_lr = nn::AutoLR::on();
+    f.auto_lr.initial_lr = 0.01f;
+    const auto h = net.fit(x, bad, f);
+    CHECK(h.auto_lr.stopped_early);
+    CHECK(h.auto_lr.rollbacks == f.auto_lr.max_rollbacks + 1);
+    CHECK(h.auto_lr.best_epoch == 0);
+    CHECK(model_bytes(net) == before);  // untouched initial weights
+}
+
+TEST(auto_lr_rejects_conflicting_settings) {
+    nn::Matrix x, y;
+    auto_lr_data(x, y, 50);
+    auto net = auto_lr_net(std::make_unique<nn::Adam>());
+    nn::FitOptions f;
+    f.epochs = 2;
+    f.verbose = 0;
+    f.auto_lr = nn::AutoLR::on();
+    f.schedule = nn::LRSchedule::cosine();
+    bool threw = false;
+    try { net.fit(x, y, f); } catch (const std::invalid_argument&) { threw = true; }
+    CHECK(threw);
+    // reduce_on_plateau supplies patience, factor and the lower bound
+    f.schedule = nn::LRSchedule::reduce_on_plateau(7, 0.25f, 1e-4f);
+    const auto h = net.fit(x, y, f);
+    CHECK(h.auto_lr.patience == 7);
+
+    // an optimizer without clone() needs initial_lr
+    struct Plain final : nn::Optimizer {
+        Plain() : nn::Optimizer(0.1f) {}
+        void step(const std::vector<nn::ParamRef>& p) override {
+            for (const auto& q : p)
+                for (std::size_t i = 0; i < q.size; ++i) q.value[i] -= m_lr * q.grad[i];
+        }
+    };
+    auto own = auto_lr_net(std::make_unique<Plain>());
+    f.schedule = {};
+    threw = false;
+    try { own.fit(x, y, f); } catch (const std::logic_error&) { threw = true; }
+    CHECK(threw);
+    f.auto_lr.initial_lr = 0.05f;
+    CHECK(own.fit(x, y, f).auto_lr.start_lr == 0.05f);
+}
+
 TEST(spiking_lif_rate) {
     // constant suprathreshold current: analytic ISI = t_ref + tau ln(R I / (R I - (thr - rest)))
     nn::spiking::Network sn(0.01f);

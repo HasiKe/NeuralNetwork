@@ -16,6 +16,8 @@ public:
 
     virtual void step(const std::vector<ParamRef>& params) = 0;
     virtual void reset() { m_t = 0; }
+    /// Copy including state, used by the LR range test (nullptr = not supported).
+    virtual std::unique_ptr<Optimizer> clone() const { return nullptr; }
 
     real learning_rate() const { return m_lr; }
     void set_learning_rate(real lr) { m_lr = lr; }
@@ -37,6 +39,7 @@ public:
         : Optimizer(lr, weight_decay), m_mu(momentum), m_nesterov(nesterov) {}
     void step(const std::vector<ParamRef>& params) override;
     void reset() override { Optimizer::reset(); m_v.clear(); }
+    std::unique_ptr<Optimizer> clone() const override { return std::make_unique<SGD>(*this); }
 
 private:
     real m_mu;
@@ -52,6 +55,7 @@ public:
         : Optimizer(lr, weight_decay), m_b1(beta1), m_b2(beta2), m_eps(eps), m_decoupled(decoupled) {}
     void step(const std::vector<ParamRef>& params) override;
     void reset() override { Optimizer::reset(); m_m.clear(); m_v.clear(); }
+    std::unique_ptr<Optimizer> clone() const override { return std::make_unique<Adam>(*this); }
 
 private:
     real m_b1, m_b2, m_eps;
@@ -65,6 +69,7 @@ public:
         : Optimizer(lr, weight_decay), m_rho(rho), m_eps(eps) {}
     void step(const std::vector<ParamRef>& params) override;
     void reset() override { Optimizer::reset(); m_s.clear(); }
+    std::unique_ptr<Optimizer> clone() const override { return std::make_unique<RMSProp>(*this); }
 
 private:
     real m_rho, m_eps;
@@ -77,6 +82,7 @@ public:
         : Optimizer(lr, weight_decay), m_eps(eps) {}
     void step(const std::vector<ParamRef>& params) override;
     void reset() override { Optimizer::reset(); m_s.clear(); }
+    std::unique_ptr<Optimizer> clone() const override { return std::make_unique<Adagrad>(*this); }
 
 private:
     real m_eps;

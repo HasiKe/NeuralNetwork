@@ -241,6 +241,52 @@ net.save("model.nnet");
 nn::Network again = nn::Network::load("model.nnet");
 ```
 
+### Automatische Lernrate
+
+Opt-in. Du gibst keine Lernrate an; was im Optimizer steht, wird überschrieben.
+
+```cpp
+net.compile(nn::Loss::MeanSquaredError, std::make_unique<nn::Adam>());
+nn::FitOptions opt;
+opt.epochs = 200;                    // Obergrenze
+opt.auto_lr = nn::AutoLR::on();
+nn::History h = net.fit(x, y, opt);  // oder fit(x, y, x_val, y_val, opt)
+// h.auto_lr.start_lr, final_lr, best_epoch, reductions, rollbacks, range.lrs / range.losses
+```
+
+Ablauf: Ein LR-Range-Test bestimmt den Startwert (ein Drittel der Rate mit dem
+kleinsten geglätteten Loss; Gewichte und Optimizer-Zustand bleiben unverändert),
+lineares Warmup, Halbieren bei Plateau, bei Divergenz oder NaN zurück auf die
+besten Gewichte mit kleinerer Rate, Early Stopping, am Ende bleiben die besten
+Gewichte. Ohne Validierungsdaten werden 15 % der Zeilen zurückgehalten
+(`auto_lr.validation_split = 0` beobachtet stattdessen den Trainings-Loss; bei
+Zeitreihen besser einen eigenen Validierungsblock übergeben). Mit
+`opt.schedule = reduce_on_plateau(...)` gelten dessen Geduld, Faktor und Minimum.
+`net.find_learning_rate(x, y)` führt nur den Range-Test aus. Ein eigener
+Optimizer braucht `clone()` oder `auto_lr.initial_lr`.
+
+Gemessen mit `./build/nn_auto_lr_bench 10` (Test-Loss, Mittel über 10 Seeds)
+gegen 8 feste Raten von 1e-4 bis 0,3, jeweils mit und ohne Reduce-on-Plateau,
+alle mit ihren besten Validierungsgewichten. „Beste feste“ wird nachträglich auf
+den Testdaten ausgewählt, das begünstigt die festen Raten.
+
+| Daten | Optimizer | auto | beste feste | Median fest | Platz von auto (von 17) |
+|---|---|---|---|---|---|
+| seeds (echt, 210 Zeilen) | Adam | 0,246 | 0,206 | 0,290 | 9 |
+| seeds | SGD Momentum | 0,300 | 0,218 | 0,281 | 11 |
+| Spiralen (synthetisch) | Adam | 0,0047 | 0,0019 | 0,0080 | 5 |
+| Spiralen | SGD Momentum | 0,0053 | 0,0045 | 0,045 | 5 |
+| Friedman #1 (synthetisch) | Adam | 0,0788 | 0,0817 | 0,112 | 1 |
+| Friedman #1 | SGD Momentum | 0,0958 | 0,0947 | 0,185 | 3 |
+| Fläche (synthetisch) | Adam | 0,0115 | 0,0115 | 0,0137 | 1 |
+| Fläche | SGD Momentum | 0,0120 | 0,0123 | 0,018 | 1 |
+
+Sie spart also die Suche und vermeidet schlechte Raten, eine von Hand gewählte
+Rate kann aber besser sein, auf dem winzigen Seeds-Datensatz deutlich
+(Genauigkeit dort 91,7 % gegen 92,6 % mit Adam, 93,1 % gegen 92,6 % mit SGD;
+42 Testzeilen, große Streuung). Die Voreinstellungen wurden auf anderen Seeds
+der ersten drei Datensätze gewählt; „Fläche“ wurde dafür nicht benutzt.
+
 ### Datenlayout
 
 Jede Schicht verarbeitet Matrizen der Form `[Batch x Merkmale]`. Strukturierte
@@ -295,7 +341,7 @@ include/nn/        öffentliche Header (nn.hpp = Sammelheader)
   layers/          Dense, Dropout, RBF, LayerNorm, rekurrent, Faltung
 src/               Implementierung (Bibliothek) + klassisches Programm (main.cpp, Neuron/Layer/NeuralNetwork.cpp)
 tests/             eigenständige Testsuite (Gradientenprüfung für jede Schicht und Aktivierung)
-benchmarks/        nn_bench
+benchmarks/        nn_bench, nn_auto_lr_bench
 examples/          Beispielprogramme
 data/              Seeds-Datensatz
 docs/              Hintergrund zu Netzarchitekturen

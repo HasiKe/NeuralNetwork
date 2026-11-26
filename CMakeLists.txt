@@ -63,6 +63,7 @@ endif()
 
 set(NN_SOURCES
     src/activation.cpp
+    src/auto_lr.cpp
     src/data.cpp
     src/device.cpp
     src/kernels.cpp
@@ -250,6 +251,8 @@ if(NN_BUILD_TESTS)
 endif()
 
 if(NN_BUILD_BENCHMARKS)
+    add_executable(nn_auto_lr_bench benchmarks/auto_lr_bench.cpp)
+    target_link_libraries(nn_auto_lr_bench PRIVATE nn::nn)
     add_executable(nn_bench benchmarks/bench.cpp)
     target_link_libraries(nn_bench PRIVATE nn::nn)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NN_NATIVE_ARCH)

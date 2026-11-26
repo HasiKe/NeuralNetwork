@@ -234,6 +234,51 @@ net.save("model.nnet");
 nn::Network again = nn::Network::load("model.nnet");
 ```
 
+### Automatic learning rate
+
+Opt-in. You give no learning rate; whatever the optimizer holds is overwritten.
+
+```cpp
+net.compile(nn::Loss::MeanSquaredError, std::make_unique<nn::Adam>());
+nn::FitOptions opt;
+opt.epochs = 200;                    // upper limit
+opt.auto_lr = nn::AutoLR::on();
+nn::History h = net.fit(x, y, opt);  // or fit(x, y, x_val, y_val, opt)
+// h.auto_lr.start_lr, final_lr, best_epoch, reductions, rollbacks, range.lrs / range.losses
+```
+
+What it does: an LR range test picks the start value (a third of the rate with the
+lowest smoothed loss; weights and optimizer state stay untouched), linear warmup,
+halving on a plateau, restore of the best weights plus a lower rate on divergence
+or NaN, early stopping, and the best weights are kept at the end. Without
+validation data 15 % of the rows are held out (`auto_lr.validation_split = 0`
+monitors the training loss instead; for time series pass your own validation
+block). With `opt.schedule = reduce_on_plateau(...)` its patience, factor and
+minimum are used. `net.find_learning_rate(x, y)` runs the range test alone. A
+custom optimizer needs `clone()` or `auto_lr.initial_lr`.
+
+Measured with `./build/nn_auto_lr_bench 10` (test loss, mean over 10 seeds)
+against 8 fixed rates from 1e-4 to 0.3, each with and without reduce-on-plateau,
+all keeping their best validation weights. "Best fixed" is picked afterwards on
+the test set, which favours the fixed rates.
+
+| Data | Optimizer | auto | best fixed | median fixed | rank of auto (of 17) |
+|---|---|---|---|---|---|
+| seeds (real, 210 rows) | Adam | 0.246 | 0.206 | 0.290 | 9 |
+| seeds | SGD momentum | 0.300 | 0.218 | 0.281 | 11 |
+| spirals (synthetic) | Adam | 0.0047 | 0.0019 | 0.0080 | 5 |
+| spirals | SGD momentum | 0.0053 | 0.0045 | 0.045 | 5 |
+| Friedman #1 (synthetic) | Adam | 0.0788 | 0.0817 | 0.112 | 1 |
+| Friedman #1 | SGD momentum | 0.0958 | 0.0947 | 0.185 | 3 |
+| surface (synthetic) | Adam | 0.0115 | 0.0115 | 0.0137 | 1 |
+| surface | SGD momentum | 0.0120 | 0.0123 | 0.018 | 1 |
+
+So it saves the search and avoids bad rates, but a hand-picked rate can still be
+better, clearly so on the tiny seeds set (accuracy there: 91.7 % vs 92.6 % with
+Adam, 93.1 % vs 92.6 % with SGD; 42 test rows, large spread). The defaults were
+chosen on other random seeds of the first three data sets; "surface" was not used
+for that.
+
 ### Data layout
 
 Every layer consumes and produces matrices of shape `[batch x features]`.
@@ -288,7 +333,7 @@ include/nn/        public headers (nn.hpp = umbrella)
   layers/          Dense, Dropout, RBF, LayerNorm, recurrent, conv
 src/               implementation (library) + classic program (main.cpp, Neuron/Layer/NeuralNetwork.cpp)
 tests/             self-contained test suite (gradient checks for every layer and activation)
-benchmarks/        nn_bench
+benchmarks/        nn_bench, nn_auto_lr_bench
 examples/          example programs
 data/              Seeds dataset
 docs/              background on neural network families

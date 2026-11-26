@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "auto_lr.hpp"
 #include "layer.hpp"
 #include "loss.hpp"
 #include "optimizer.hpp"
@@ -23,12 +24,16 @@ struct FitOptions {
     /// Stop when validation (or training) loss has not improved for this many epochs (0 = off).
     std::size_t early_stopping_patience = 0;
     LRSchedule schedule;
+    /// Opt-in automatic learning rate: `opt.auto_lr = nn::AutoLR::on();`
+    /// Combines only with the constant or reduce_on_plateau schedule.
+    AutoLR auto_lr;
     /// Called after every epoch; return false to stop training.
     std::function<bool(std::size_t epoch, real loss, real val_loss)> on_epoch_end;
 };
 
 struct History {
     std::vector<real> loss, val_loss, accuracy, val_accuracy, learning_rate;
+    AutoLRReport auto_lr;  ///< filled when FitOptions::auto_lr is enabled
 };
 
 /// Sequential feed-forward container.
@@ -72,6 +77,12 @@ public:
     History fit(const Matrix& x, const Matrix& y, const Matrix& x_val, const Matrix& y_val,
                 const FitOptions& opt = {});
 
+    /// LR range test: raise the learning rate exponentially over some mini-batches
+    /// and suggest a start value. Weights and optimizer state stay unchanged.
+    /// Requires compile() and an optimizer that implements clone().
+    LRFindResult find_learning_rate(const Matrix& x, const Matrix& y, std::size_t batch_size = 32,
+                                    const AutoLR& options = {});
+
     /// Inference in chunks of `batch_size` rows (keeps memory bounded).
     Matrix predict(const Matrix& x, std::size_t batch_size = 256);
     std::vector<std::size_t> predict_classes(const Matrix& x, std::size_t batch_size = 256);
@@ -98,6 +109,8 @@ public:
     Rng& rng() { return m_rng; }
 
 private:
+    History fit_auto(const Matrix& x, const Matrix& y, const Matrix& x_val, const Matrix& y_val,
+                     const FitOptions& opt);
     void refresh_params();
     std::size_t m_input_dim;
     Rng m_rng;

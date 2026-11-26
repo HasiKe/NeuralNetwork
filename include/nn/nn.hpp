@@ -17,6 +17,7 @@
 #include "layers/conv.hpp"
 #include "layers/layernorm.hpp"
 #include "loss.hpp"
+#include "auto_lr.hpp"
 #include "optimizer.hpp"
 #include "network.hpp"
 #include "data.hpp"

@@ -153,6 +153,7 @@ History Network::fit(const Matrix& x, const Matrix& y, const Matrix& xv, const M
     if (y.cols() != output_dim()) throw std::invalid_argument("nn: target width != output width");
     const std::size_t N = x.rows();
     if (N == 0) return {};
+    if (opt.auto_lr.enabled) return fit_auto(x, y, xv, yv, opt);
     const std::size_t bs = std::max<std::size_t>(1, std::min(opt.batch_size, N));
     const bool has_val = xv.rows() > 0;
     const bool cls = is_classification(m_loss);
@@ -162,8 +163,8 @@ History Network::fit(const Matrix& x, const Matrix& y, const Matrix& xv, const M
     std::iota(idx.begin(), idx.end(), 0);
     History h;
     real best = std::numeric_limits<real>::infinity();
-    std::size_t since_best = 0, plateau = 0;
-    real plateau_best = std::numeric_limits<real>::infinity();
+    std::size_t since_best = 0;
+    detail::Plateau plateau{std::numeric_limits<real>::infinity()};
     std::vector<std::vector<real>> best_params;
 
     for (std::size_t e = 0; e < opt.epochs; ++e) {
@@ -224,13 +225,7 @@ History Network::fit(const Matrix& x, const Matrix& y, const Matrix& xv, const M
                 break;
             }
             case LRSchedule::Kind::ReduceOnPlateau:
-                if (monitored < plateau_best * (1 - 1e-4f)) {
-                    plateau_best = monitored;
-                    plateau = 0;
-                } else if (++plateau >= sc.patience) {
-                    lr *= sc.factor;
-                    plateau = 0;
-                }
+                if (plateau.update(monitored, sc.patience)) lr *= sc.factor;
                 break;
         }
         m_opt->set_learning_rate(std::max(lr, sc.kind == LRSchedule::Kind::Constant ? lr : sc.min_lr));
